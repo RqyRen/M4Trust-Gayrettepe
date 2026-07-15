@@ -46,6 +46,18 @@ class Settings(BaseSettings):
     openai_timeout_seconds: float = 60.0
     openai_max_source_chars: int = 60_000  # asiri uzun dokuman icin prompt sinirlamasi
 
+    # Video analysis: Roboflow (ADR-004 SS16 - Yusuf'un serbest model secimi)
+    roboflow_api_key: str = ""
+    roboflow_api_url: str = "https://serverless.roboflow.com"
+    roboflow_logistics_model_id: str = "logistics-sz9jr/2"
+    roboflow_damage_model_id: str = "detecting-a-damaged-parcel/11"
+    roboflow_min_confidence: float = 0.4
+    roboflow_timeout_seconds: float = 30.0
+
+    # Video frame ornekleme (maliyet/sure sinirlamasi)
+    video_frame_sample_interval_seconds: float = 1.0
+    video_max_sampled_frames: int = 30
+
 
 @lru_cache
 def get_settings() -> Settings:

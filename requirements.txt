@@ -23,6 +23,11 @@ pytesseract
 PyMuPDF
 Pillow
 
+# Video analysis: frame ornekleme + Roboflow REST cagrisi (ADR-002 §3.2, ADR-004 §16)
+# NOT: resmi inference-sdk paketi bu ortamin Python surumunu desteklemiyor;
+# dogrudan httpx ile REST API'ye baglanilir (ADR-007 §15 minimum dependency).
+opencv-python-headless
+
 # Contract validation (ADR-002 §24)
 jsonschema
 PyYAML
