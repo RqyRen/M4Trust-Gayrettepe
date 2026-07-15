@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     rabbitmq_vhost: str = "/"
     worker_prefetch: int = 8
 
+    # Kaynak indirme (ADR-001 §6, ADR-002 §7.1)
+    download_timeout_seconds: float = 30.0
+    download_max_bytes: int = 256 * 1024 * 1024  # 256 MiB
+    download_chunk_bytes: int = 1024 * 1024
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -8,6 +8,10 @@ uvicorn[standard]
 # Messaging (RabbitMQ - ADR-002)
 pika
 
+# Kaynak indirme: kisa omurlu presigned URL (ADR-001 §6)
+# NOT: object storage'a genel SDK erisimi YOK; sadece HTTP GET.
+httpx
+
 # Contract validation (ADR-002 §24)
 jsonschema
 PyYAML
