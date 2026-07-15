@@ -1,0 +1,190 @@
+asyncapi: 2.6.0
+info:
+  title: M4Trust AI Messaging Contracts
+  version: 1.0.0
+  description: |
+    Versioned asynchronous contracts for M4Trust AI commands, canonical results,
+    failures, and best-effort cancellation. The payload schemas are external
+    JSON Schema Draft 2020-12 files in this repository. Wire timestamps are
+    UTC RFC 3339 values ending in Z; selected transport objects tolerate
+    unknown optional properties within the same major version.
+defaultContentType: application/json
+channels:
+  ai.document-extraction.requested.v1:
+    description: Document extraction commands published to the topic exchange.
+    publish:
+      operationId: publishDocumentExtractionRequested
+      message:
+        $ref: '#/components/messages/DocumentExtractionRequested'
+    bindings:
+      amqp:
+        is: routingKey
+        queue:
+          name: m4trust.ai.document-extraction.v1
+          durable: true
+        exchange:
+          name: m4trust.ai.commands
+          type: topic
+          durable: true
+  ai.video-analysis.requested.v1:
+    description: Video analysis commands published to the topic exchange.
+    publish:
+      operationId: publishVideoAnalysisRequested
+      message:
+        $ref: '#/components/messages/VideoAnalysisRequested'
+    bindings:
+      amqp:
+        is: routingKey
+        queue:
+          name: m4trust.ai.video-analysis.v1
+          durable: true
+        exchange:
+          name: m4trust.ai.commands
+          type: topic
+          durable: true
+  ai.job.cancel.requested.v1:
+    description: Best-effort cancellation commands for either supported job type.
+    publish:
+      operationId: publishJobCancelRequested
+      message:
+        $ref: '#/components/messages/JobCancelRequested'
+    bindings:
+      amqp:
+        is: routingKey
+        queue:
+          name: m4trust.ai.cancellation.v1
+          durable: true
+        exchange:
+          name: m4trust.ai.commands
+          type: topic
+          durable: true
+  ai.document-extraction.completed.v1:
+    description: Canonical document extraction results published to the topic exchange.
+    publish:
+      operationId: publishDocumentExtractionCompleted
+      message:
+        $ref: '#/components/messages/DocumentExtractionCompleted'
+    bindings:
+      amqp:
+        is: routingKey
+        queue:
+          name: m4trust.core.ai-results.v1
+          durable: true
+        exchange:
+          name: m4trust.ai.events
+          type: topic
+          durable: true
+  ai.document-extraction.failed.v1:
+    description: Canonical document extraction failures published to the topic exchange.
+    publish:
+      operationId: publishDocumentExtractionFailed
+      message:
+        $ref: '#/components/messages/DocumentExtractionFailed'
+    bindings:
+      amqp:
+        is: routingKey
+        queue:
+          name: m4trust.core.ai-results.v1
+          durable: true
+        exchange:
+          name: m4trust.ai.events
+          type: topic
+          durable: true
+  ai.video-analysis.completed.v1:
+    description: Canonical video analysis results published to the topic exchange.
+    publish:
+      operationId: publishVideoAnalysisCompleted
+      message:
+        $ref: '#/components/messages/VideoAnalysisCompleted'
+    bindings:
+      amqp:
+        is: routingKey
+        queue:
+          name: m4trust.core.ai-results.v1
+          durable: true
+        exchange:
+          name: m4trust.ai.events
+          type: topic
+          durable: true
+  ai.video-analysis.failed.v1:
+    description: Canonical video analysis failures published to the topic exchange.
+    publish:
+      operationId: publishVideoAnalysisFailed
+      message:
+        $ref: '#/components/messages/VideoAnalysisFailed'
+    bindings:
+      amqp:
+        is: routingKey
+        queue:
+          name: m4trust.core.ai-results.v1
+          durable: true
+        exchange:
+          name: m4trust.ai.events
+          type: topic
+          durable: true
+components:
+  messages:
+    DocumentExtractionRequested:
+      name: ai.document-extraction.requested.v1
+      title: Document extraction requested
+      payload:
+        $ref: '../schemas/document-extraction/requested-event-1.0.0.schema.json'
+    VideoAnalysisRequested:
+      name: ai.video-analysis.requested.v1
+      title: Video analysis requested
+      payload:
+        $ref: '../schemas/video-analysis/requested-event-1.0.0.schema.json'
+    JobCancelRequested:
+      name: ai.job.cancel.requested.v1
+      title: Job cancel requested
+      payload:
+        $ref: '../schemas/job/cancel-requested-event-1.0.0.schema.json'
+    DocumentExtractionCompleted:
+      name: ai.document-extraction.completed.v1
+      title: Document extraction completed
+      payload:
+        $ref: '../schemas/document-extraction/completed-event-1.0.0.schema.json'
+    DocumentExtractionFailed:
+      name: ai.document-extraction.failed.v1
+      title: Document extraction failed
+      payload:
+        $ref: '../schemas/document-extraction/failed-event-1.0.0.schema.json'
+    VideoAnalysisCompleted:
+      name: ai.video-analysis.completed.v1
+      title: Video analysis completed
+      payload:
+        $ref: '../schemas/video-analysis/completed-event-1.0.0.schema.json'
+    VideoAnalysisFailed:
+      name: ai.video-analysis.failed.v1
+      title: Video analysis failed
+      payload:
+        $ref: '../schemas/video-analysis/failed-event-1.0.0.schema.json'
+x-m4trust-topology:
+  exchangeSemantics: topic
+  exchanges:
+    - name: m4trust.ai.commands
+      purpose: Spring-owned commands to AI workers
+    - name: m4trust.ai.events
+      purpose: Canonical AI results and failures back to core
+    - name: m4trust.ai.dead-letter
+      purpose: Undeliverable or exhausted messages
+  queues:
+    - name: m4trust.ai.document-extraction.v1
+      exchange: m4trust.ai.commands
+      routingKeys: [ai.document-extraction.requested.v1]
+    - name: m4trust.ai.video-analysis.v1
+      exchange: m4trust.ai.commands
+      routingKeys: [ai.video-analysis.requested.v1]
+    - name: m4trust.ai.cancellation.v1
+      exchange: m4trust.ai.commands
+      routingKeys: [ai.job.cancel.requested.v1]
+    - name: m4trust.core.ai-results.v1
+      exchange: m4trust.ai.events
+      routingKeys:
+        - ai.document-extraction.completed.v1
+        - ai.document-extraction.failed.v1
+        - ai.video-analysis.completed.v1
+        - ai.video-analysis.failed.v1
+    - name: m4trust.ai.dead-letter.v1
+      exchange: m4trust.ai.dead-letter
+      routingKeys: ['#']

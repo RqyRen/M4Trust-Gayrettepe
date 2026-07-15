@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/common/producer/1.0.0",
+  "title": "M4Trust Producer",
+  "description": "Descriptive producer metadata. It is not a provider-native response object.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "service": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable M4Trust service name that emitted the event."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$",
+      "description": "Semantic version of the emitting service."
+    }
+  },
+  "required": ["service", "version"]
+}

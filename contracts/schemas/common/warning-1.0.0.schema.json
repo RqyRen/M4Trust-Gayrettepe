@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/common/warning/1.0.0",
+  "title": "M4Trust Warning",
+  "description": "Non-fatal advisory information. Warning codes are intentionally open for forward compatibility; severity is a closed set without ERROR.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "code": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable warning code. Initial codes include LOW_TEXT_QUALITY, OCR_USED, PARTIAL_TEXT_EXTRACTION, LOW_CONFIDENCE_RESULT, INCOMPLETE_SOURCE_REFERENCE, VIDEO_VISIBILITY_GAP, and VIDEO_LOW_QUALITY."
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Safe human-readable message; do not include secrets, raw stack traces, provider-native messages, or PII."
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["INFO", "WARNING"]
+    },
+    "path": {
+      "type": ["string", "null"],
+      "description": "JSON Pointer-like path to the affected canonical field, when known."
+    },
+    "details": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1},
+        "expected": {"type": "string", "minLength": 1},
+        "observed": {"type": "string", "minLength": 1}
+      },
+      "description": "Safe, bounded diagnostic details; no arbitrary key/value map is allowed."
+    }
+  },
+  "required": ["code", "message", "severity", "path", "details"]
+}

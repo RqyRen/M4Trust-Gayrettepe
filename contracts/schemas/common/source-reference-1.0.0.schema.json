@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/common/source-reference/1.0.0",
+  "title": "M4Trust Source Reference",
+  "description": "A source location in a document or other evidence. Semantic checks such as endOffset > startOffset remain runtime validation.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "page": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "One-based document page number."
+    },
+    "startOffset": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based character offset, when available."
+    },
+    "endOffset": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Exclusive character offset, when available."
+    }
+  },
+  "required": ["page"]
+}

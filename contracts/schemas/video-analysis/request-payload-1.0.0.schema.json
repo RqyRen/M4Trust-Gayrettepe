@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/video-analysis/request-payload/1.0.0",
+  "title": "M4Trust Video Analysis Request Payload",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "videoId": {"type": "string", "format": "uuid"},
+        "fileName": {"type": "string", "minLength": 1},
+        "mediaType": {"type": "string", "minLength": 1},
+        "sizeBytes": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+        "download": {"$ref": "https://schemas.m4trust.internal/ai/common/download-reference/1.0.0"}
+      },
+      "required": ["videoId", "fileName", "mediaType", "sizeBytes", "sha256", "download"]
+    },
+    "processing": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "analysisProfile": {"const": "DELIVERY_EVIDENCE_DEFAULT"},
+        "expectedObjects": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {"type": "string", "minLength": 1},
+              "expectedCount": {"type": "integer", "minimum": 0}
+            },
+            "required": ["label", "expectedCount"]
+          },
+          "maxItems": 100
+        },
+        "requestedOutputSchema": {"const": "m4trust.video-analysis-result"},
+        "requestedOutputSchemaVersion": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"}
+      },
+      "required": ["analysisProfile", "expectedObjects", "requestedOutputSchema", "requestedOutputSchemaVersion"]
+    },
+    "deadlineAt": {"$ref": "https://schemas.m4trust.internal/ai/common/utc-timestamp/1.0.0", "description": "RFC 3339 UTC processing deadline with trailing Z."}
+  },
+  "required": ["input", "processing", "deadlineAt"]
+}

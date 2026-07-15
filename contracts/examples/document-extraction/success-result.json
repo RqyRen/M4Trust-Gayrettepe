@@ -1,0 +1,84 @@
+{
+  "eventId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "eventType": "ai.job.completed.v1",
+  "schemaVersion": "1.0.0",
+  "occurredAt": "2026-07-13T18:03:12Z",
+  "correlationId": "22222222-2222-4222-8222-222222222222",
+  "causationId": "77777777-7777-4777-8777-777777777777",
+  "jobId": "88888888-8888-4888-8888-888888888888",
+  "jobType": "DOCUMENT_EXTRACTION",
+  "tenantId": "44444444-4444-4444-8444-444444444444",
+  "transactionId": "99999999-9999-4999-8999-999999999999",
+  "subjectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "idempotencyKey": "doc-full-2026-07-13-result",
+  "producer": {"service": "m4trust-ai-worker", "version": "1.0.0"},
+  "payload": {
+    "result": {
+      "document": {
+        "detectedMediaType": "application/pdf",
+        "detectedLanguage": "tr",
+        "pageCount": 8,
+        "textExtractionMethod": "DIGITAL_PDF",
+        "contentSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "parties": [
+        {
+          "partyReference": "party-buyer",
+          "role": "BUYER",
+          "legalName": {"value": "Example Retail A.S.", "confidence": 0.98},
+          "taxIdentifier": {"value": null, "masked": true, "confidence": 0.0},
+          "sourceReferences": [{"page": 1, "startOffset": 120, "endOffset": 145}]
+        },
+        {
+          "partyReference": "party-seller",
+          "role": "SELLER",
+          "legalName": {"value": "Example Supply Ltd.", "confidence": 0.97},
+          "taxIdentifier": {"value": "***456", "masked": true, "confidence": 0.91},
+          "sourceReferences": [{"page": 1, "startOffset": 150, "endOffset": 176}]
+        }
+      ],
+      "rules": [
+        {
+          "ruleReference": "rule-payment-1",
+          "category": "PAYMENT",
+          "title": "Contract value",
+          "description": "The stated contract value is 1,250,000 EUR.",
+          "structuredValue": {"type": "MONEY", "amountMinor": 125000000, "currency": "EUR"},
+          "confidence": 0.96,
+          "sourceReferences": [{"page": 3, "startOffset": 42, "endOffset": 82}]
+        },
+        {
+          "ruleReference": "rule-delivery-1",
+          "category": "DELIVERY",
+          "title": "Delivery period",
+          "description": "Delivery is due within fourteen days.",
+          "structuredValue": {"type": "DURATION", "valueSeconds": 1209600},
+          "confidence": 0.93,
+          "sourceReferences": [{"page": 4, "startOffset": 10, "endOffset": 58}]
+        }
+      ],
+      "deliveryRequirements": [
+        {
+          "requirementReference": "delivery-evidence-1",
+          "evidenceType": "SIGNED_DOCUMENT",
+          "required": true,
+          "confidence": 0.94,
+          "sourceReferences": [{"page": 5, "startOffset": 200, "endOffset": 260}]
+        }
+      ],
+      "summary": {"requiresManualReview": false, "reviewReasons": []}
+    },
+    "technicalMetadata": {
+      "pipelineVersion": "doc-pipeline-1.0.0",
+      "modelProvider": "internal-model-service",
+      "modelFamily": "contract-extraction",
+      "modelVersion": "2026-07",
+      "promptVersion": "contract-v1",
+      "retrievalVersion": "legal-default-1",
+      "parserVersion": "parser-1.0.0",
+      "privacyVersion": "default-1",
+      "durationMs": 4210
+    },
+    "warnings": []
+  }
+}

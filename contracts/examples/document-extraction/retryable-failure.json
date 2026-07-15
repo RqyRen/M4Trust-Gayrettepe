@@ -1,0 +1,20 @@
+{
+  "eventId": "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  "eventType": "ai.job.failed.v1",
+  "schemaVersion": "1.0.0",
+  "occurredAt": "2026-07-13T18:05:00Z",
+  "correlationId": "22222222-2222-4222-8222-222222222222",
+  "causationId": "77777777-7777-4777-8777-777777777777",
+  "jobId": "88888888-8888-4888-8888-888888888888",
+  "jobType": "DOCUMENT_EXTRACTION",
+  "tenantId": "44444444-4444-4444-8444-444444444444",
+  "transactionId": "99999999-9999-4999-8999-999999999999",
+  "subjectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "idempotencyKey": "doc-full-2026-07-13-retryable-failure",
+  "producer": {"service": "m4trust-ai-worker", "version": "1.0.0"},
+  "payload": {
+    "error": {"category": "RETRYABLE_TECHNICAL", "code": "MODEL_PROVIDER_TIMEOUT", "message": "The analysis dependency did not respond before the timeout.", "retryRecommended": true, "details": {"dependency": "analysis-service", "reason": "timeout", "retryAfterMs": 5000}},
+    "attempt": {"attemptNumber": 1, "maxAttempts": 3},
+    "technicalMetadata": {"pipelineVersion": "doc-pipeline-1.0.0", "modelProvider": "internal-model-service", "modelFamily": "contract-extraction", "modelVersion": "2026-07", "promptVersion": "contract-v1", "retrievalVersion": null, "parserVersion": "parser-1.0.0", "privacyVersion": "default-1", "durationMs": 30000}
+  }
+}

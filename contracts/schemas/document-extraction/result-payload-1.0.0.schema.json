@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/document-extraction/result-payload/1.0.0",
+  "title": "M4Trust Canonical Document Extraction Result Payload",
+  "description": "Canonical M4Trust output. It contains no model-native or provider-specific response shape.",
+  "type": "object",
+  "additionalProperties": true,
+  "$defs": {
+    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    "structuredValue": {
+      "description": "Versioned, closed discriminated union for rule values. Monetary amounts use minor units and percentages use basis points.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"type": {"const": "TEXT"}, "value": {"type": "string"}},
+          "required": ["type", "value"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"type": {"const": "MONEY"}, "amountMinor": {"type": "integer"}, "currency": {"type": "string", "pattern": "^[A-Z]{3}$"}},
+          "required": ["type", "amountMinor", "currency"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"type": {"const": "PERCENTAGE"}, "basisPoints": {"type": "integer", "minimum": 0, "maximum": 10000}},
+          "required": ["type", "basisPoints"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"type": {"const": "DURATION"}, "valueSeconds": {"type": "integer", "minimum": 0}},
+          "required": ["type", "valueSeconds"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"type": {"const": "DATE"}, "value": {"type": "string", "format": "date"}},
+          "required": ["type", "value"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"type": {"const": "BOOLEAN"}, "value": {"type": "boolean"}},
+          "required": ["type", "value"]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {"type": {"const": "QUANTITY"}, "value": {"type": "number"}, "unit": {"type": "string", "minLength": 1}},
+          "required": ["type", "value", "unit"]
+        }
+      ]
+    },
+    "legalName": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"value": {"type": "string", "minLength": 1}, "confidence": {"$ref": "#/$defs/confidence"}},
+      "required": ["value", "confidence"]
+    },
+    "taxIdentifier": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {"value": {"type": ["string", "null"]}, "masked": {"type": "boolean"}, "confidence": {"$ref": "#/$defs/confidence"}},
+      "required": ["value", "masked", "confidence"]
+    },
+    "sourceReferences": {"type": "array", "items": {"$ref": "https://schemas.m4trust.internal/ai/common/source-reference/1.0.0"}},
+    "warning": {"$ref": "https://schemas.m4trust.internal/ai/common/warning/1.0.0"}
+  },
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "document": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "detectedMediaType": {"type": "string", "minLength": 1},
+            "detectedLanguage": {"type": "string", "minLength": 2},
+            "pageCount": {"type": "integer", "minimum": 1},
+            "textExtractionMethod": {"type": "string", "enum": ["DIGITAL_PDF", "DOCX", "OCR", "HYBRID", "UNKNOWN"]},
+            "contentSha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"}
+          },
+          "required": ["detectedMediaType", "detectedLanguage", "pageCount", "textExtractionMethod", "contentSha256"]
+        },
+        "parties": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "partyReference": {"type": "string", "minLength": 1},
+              "role": {"type": "string", "enum": ["BUYER", "SELLER", "OTHER", "UNKNOWN"]},
+              "legalName": {"$ref": "#/$defs/legalName"},
+              "taxIdentifier": {"$ref": "#/$defs/taxIdentifier"},
+              "sourceReferences": {"$ref": "#/$defs/sourceReferences"}
+            },
+            "required": ["partyReference", "role", "legalName", "taxIdentifier", "sourceReferences"]
+          }
+        },
+        "rules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "ruleReference": {"type": "string", "minLength": 1},
+              "category": {"type": "string", "enum": ["PAYMENT", "DELIVERY", "QUALITY", "PENALTY", "TERMINATION", "DISPUTE", "OTHER", "UNKNOWN"]},
+              "title": {"type": "string", "minLength": 1},
+              "description": {"type": "string", "minLength": 1},
+              "structuredValue": {"$ref": "#/$defs/structuredValue"},
+              "confidence": {"$ref": "#/$defs/confidence"},
+              "sourceReferences": {"$ref": "#/$defs/sourceReferences"}
+            },
+            "required": ["ruleReference", "category", "title", "description", "structuredValue", "confidence", "sourceReferences"]
+          }
+        },
+        "deliveryRequirements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "requirementReference": {"type": "string", "minLength": 1},
+              "evidenceType": {"type": "string", "enum": ["DELIVERY_NOTE", "INVOICE", "VIDEO", "PHOTO", "SIGNED_DOCUMENT", "OTHER", "UNKNOWN"]},
+              "required": {"type": "boolean"},
+              "confidence": {"$ref": "#/$defs/confidence"},
+              "sourceReferences": {"$ref": "#/$defs/sourceReferences"}
+            },
+            "required": ["requirementReference", "evidenceType", "required", "confidence", "sourceReferences"]
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "requiresManualReview": {"type": "boolean", "description": "Advisory only; Spring remains the business authority and must make the final decision."},
+            "reviewReasons": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          },
+          "required": ["requiresManualReview", "reviewReasons"]
+        }
+      },
+      "required": ["document", "parties", "rules", "deliveryRequirements", "summary"]
+    },
+    "technicalMetadata": {"$ref": "https://schemas.m4trust.internal/ai/common/technical-metadata/1.0.0"},
+    "warnings": {"type": "array", "items": {"$ref": "https://schemas.m4trust.internal/ai/common/warning/1.0.0"}}
+  },
+  "required": ["result", "technicalMetadata", "warnings"]
+}

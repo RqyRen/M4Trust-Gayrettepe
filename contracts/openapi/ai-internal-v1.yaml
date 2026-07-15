@@ -1,0 +1,105 @@
+openapi: 3.1.0
+info:
+  title: M4Trust AI Internal Operations API
+  version: 1.0.0
+  description: Operational metadata only. This API intentionally has no synchronous AI inference endpoint. Contract payload timestamps are UTC RFC 3339 strings ending in Z; selected transport metadata objects tolerate unknown optional properties within the same major version.
+paths:
+  /health/live:
+    get:
+      operationId: getLiveness
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Process is alive.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /health/ready:
+    get:
+      operationId: getReadiness
+      summary: Readiness probe
+      responses:
+        '200':
+          description: Process is ready for work.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+        '503':
+          description: Process is not ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+  /internal/v1/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Supported contract capabilities
+      responses:
+        '200':
+          description: Supported job and schema versions.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Capabilities'
+  /internal/v1/contracts:
+    get:
+      operationId: getContracts
+      summary: Installed contract metadata
+      description: Operational metadata only; hashes identify the installed contract files.
+      responses:
+        '200':
+          description: Installed contracts.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ContractMetadata'
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        status:
+          type: string
+          enum: [UP, DOWN]
+      required: [status]
+    Capabilities:
+      type: object
+      additionalProperties: true
+      properties:
+        capabilities:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              jobType:
+                type: string
+                enum: [DOCUMENT_EXTRACTION, VIDEO_ANALYSIS]
+              requestSchemaVersions:
+                type: array
+                items:
+                  const: 1.0.0
+              resultSchemaVersions:
+                type: array
+                items:
+                  const: 1.0.0
+            required: [jobType, requestSchemaVersions, resultSchemaVersions]
+      required: [capabilities]
+    ContractMetadata:
+      type: object
+      additionalProperties: true
+      properties:
+        name:
+          type: string
+          minLength: 1
+        version:
+          const: 1.0.0
+        sha256:
+          type: string
+          pattern: '^[A-Fa-f0-9]{64}$'
+      required: [name, version, sha256]

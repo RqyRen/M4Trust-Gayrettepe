@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/job/cancel-request-payload/1.0.0",
+  "title": "M4Trust Cancellation Request Payload",
+  "description": "Cancellation is best-effort. Version 1 has no cancelled-result event.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "reason": {
+      "type": "string",
+      "enum": ["DOCUMENT_REPLACED", "VIDEO_REPLACED", "TRANSACTION_CANCELLED", "USER_REQUESTED", "JOB_SUPERSEDED", "SYSTEM_TIMEOUT", "OTHER"]
+    }
+  },
+  "required": ["reason"]
+}

@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/common/error/1.0.0",
+  "title": "M4Trust Error",
+  "description": "Safe canonical failure information. Category, code, and retry behavior are bound as a closed discriminated policy. Do not include raw stack traces, provider-native messages, secrets, or PII.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "category": {"type": "string", "enum": ["RETRYABLE_TECHNICAL", "NON_RETRYABLE_TECHNICAL", "INVALID_INPUT"]},
+    "code": {"type": "string"},
+    "message": {"type": "string", "minLength": 1},
+    "retryRecommended": {"type": "boolean"},
+    "details": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "field": {"type": "string", "minLength": 1},
+        "reason": {"type": "string", "minLength": 1},
+        "dependency": {"type": "string", "minLength": 1},
+        "retryAfterMs": {"type": "integer", "minimum": 0},
+        "limit": {"type": "integer", "minimum": 0}
+      },
+      "description": "Optional bounded details. It is not an arbitrary object."
+    }
+  },
+  "required": ["category", "code", "message", "retryRecommended", "details"],
+  "oneOf": [
+    {
+      "properties": {
+        "category": {"const": "RETRYABLE_TECHNICAL"},
+        "code": {"enum": ["MODEL_PROVIDER_TIMEOUT", "MODEL_PROVIDER_UNAVAILABLE", "OBJECT_STORAGE_TEMPORARILY_UNAVAILABLE", "RETRIEVAL_SERVICE_UNAVAILABLE", "INTERNAL_DEPENDENCY_TIMEOUT"]},
+        "retryRecommended": {"const": true}
+      }
+    },
+    {
+      "properties": {
+        "category": {"const": "NON_RETRYABLE_TECHNICAL"},
+        "code": {"enum": ["UNSUPPORTED_MEDIA_TYPE", "UNSUPPORTED_SCHEMA_VERSION", "FILE_TOO_LARGE", "ENCRYPTED_DOCUMENT_UNSUPPORTED", "CORRUPTED_FILE", "CONTENT_HASH_MISMATCH"]},
+        "retryRecommended": {"const": false}
+      }
+    },
+    {
+      "properties": {
+        "category": {"const": "INVALID_INPUT"},
+        "code": {"enum": ["MISSING_REQUIRED_FIELD", "INVALID_DEADLINE", "INVALID_DOWNLOAD_REFERENCE", "INVALID_PROCESSING_PROFILE", "INVALID_EXPECTED_OBJECT"]},
+        "retryRecommended": {"const": false}
+      }
+    }
+  ]
+}

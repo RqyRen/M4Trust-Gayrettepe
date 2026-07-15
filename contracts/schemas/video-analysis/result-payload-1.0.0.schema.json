@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/video-analysis/result-payload/1.0.0",
+  "title": "M4Trust Canonical Video Analysis Result Payload",
+  "description": "Canonical advisory video evidence output. It cannot approve delivery, release payment, or resolve disputes.",
+  "type": "object",
+  "additionalProperties": true,
+  "$defs": {
+    "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+    "timeRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "startMs": {"type": "integer", "minimum": 0},
+        "endMs": {"type": "integer", "minimum": 0}
+      },
+      "required": ["startMs", "endMs"],
+      "description": "Inclusive/exclusive timing semantics are runtime-defined; endMs > startMs is a semantic check."
+    }
+  },
+  "properties": {
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "durationMs": {"type": "integer", "minimum": 0},
+        "observations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "observationReference": {"type": "string", "minLength": 1},
+              "type": {"type": "string", "enum": ["OBJECT_COUNT", "OBJECT_PRESENCE", "SEQUENCE", "VISIBILITY", "OTHER", "UNKNOWN"]},
+              "label": {"type": "string", "minLength": 1},
+              "observedValue": {"type": ["string", "number", "boolean"]},
+              "confidence": {"$ref": "#/$defs/confidence"},
+              "timeRange": {"$ref": "#/$defs/timeRange"}
+            },
+            "required": ["observationReference", "type", "label", "observedValue", "confidence", "timeRange"]
+          }
+        },
+        "anomalies": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "anomalyReference": {"type": "string", "minLength": 1},
+              "type": {"type": "string", "minLength": 1, "description": "Canonical anomaly classification, not a provider-native class name."},
+              "severity": {"type": "string", "enum": ["LOW", "MEDIUM", "HIGH", "UNKNOWN"]},
+              "description": {"type": "string", "minLength": 1},
+              "confidence": {"$ref": "#/$defs/confidence"},
+              "timeRange": {"$ref": "#/$defs/timeRange"}
+            },
+            "required": ["anomalyReference", "type", "severity", "description", "confidence", "timeRange"]
+          }
+        },
+        "summary": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "advisoryOutcome": {"type": "string", "enum": ["NO_ISSUE_DETECTED", "REVIEW_SUGGESTED", "INSUFFICIENT_EVIDENCE", "UNKNOWN"], "description": "Advisory only; it cannot approve delivery, release payment, or resolve disputes."},
+            "reviewReasons": {"type": "array", "items": {"type": "string", "minLength": 1}}
+          },
+          "required": ["advisoryOutcome", "reviewReasons"]
+        }
+      },
+      "required": ["durationMs", "observations", "anomalies", "summary"]
+    },
+    "technicalMetadata": {"$ref": "https://schemas.m4trust.internal/ai/common/technical-metadata/1.0.0"},
+    "warnings": {"type": "array", "items": {"$ref": "https://schemas.m4trust.internal/ai/common/warning/1.0.0"}}
+  },
+  "required": ["result", "technicalMetadata", "warnings"]
+}

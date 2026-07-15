@@ -1,0 +1,38 @@
+{
+  "eventId": "23232323-2323-4232-8232-232323232323",
+  "eventType": "ai.job.completed.v1",
+  "schemaVersion": "1.0.0",
+  "occurredAt": "2026-07-13T18:13:40Z",
+  "correlationId": "13131313-1313-4131-8131-131313131313",
+  "causationId": "18181818-1818-4181-8181-181818181818",
+  "jobId": "19191919-1919-4191-8191-191919191919",
+  "jobType": "VIDEO_ANALYSIS",
+  "tenantId": "15151515-1515-4151-8151-151515151515",
+  "transactionId": "20202020-2020-4020-8020-202020202020",
+  "subjectId": "21212121-2121-4121-8121-212121212121",
+  "idempotencyKey": "video-full-2026-07-13-result",
+  "producer": {"service": "m4trust-ai-worker", "version": "1.0.0"},
+  "payload": {
+    "result": {
+      "durationMs": 92000,
+      "observations": [
+        {"observationReference": "observation-1", "type": "OBJECT_COUNT", "label": "sealed_box", "observedValue": 4, "confidence": 0.93, "timeRange": {"startMs": 4000, "endMs": 24000}},
+        {"observationReference": "observation-2", "type": "OBJECT_PRESENCE", "label": "delivery_note", "observedValue": true, "confidence": 0.88, "timeRange": {"startMs": 45000, "endMs": 51000}}
+      ],
+      "anomalies": [],
+      "summary": {"advisoryOutcome": "NO_ISSUE_DETECTED", "reviewReasons": []}
+    },
+    "technicalMetadata": {
+      "pipelineVersion": "video-pipeline-1.0.0",
+      "modelProvider": "internal-model-service",
+      "modelFamily": "delivery-evidence",
+      "modelVersion": "2026-07",
+      "promptVersion": null,
+      "retrievalVersion": null,
+      "parserVersion": "video-parser-1.0.0",
+      "privacyVersion": "default-1",
+      "durationMs": 11400
+    },
+    "warnings": []
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "eventId": "12121212-1212-4121-8121-121212121212",
+  "eventType": "ai.job.requested.v1",
+  "schemaVersion": "1.0.0",
+  "occurredAt": "2026-07-13T18:10:00Z",
+  "correlationId": "13131313-1313-4131-8131-131313131313",
+  "causationId": null,
+  "jobId": "14141414-1414-4141-8141-141414141414",
+  "jobType": "VIDEO_ANALYSIS",
+  "tenantId": "15151515-1515-4151-8151-151515151515",
+  "transactionId": "16161616-1616-4161-8161-161616161616",
+  "subjectId": "17171717-1717-4171-8171-171717171717",
+  "idempotencyKey": "video-minimum-2026-07-13",
+  "producer": {"service": "m4trust-core", "version": "1.0.0"},
+  "payload": {
+    "input": {
+      "videoId": "17171717-1717-4171-8171-171717171717",
+      "fileName": "delivery.mp4",
+      "mediaType": "video/mp4",
+      "sizeBytes": 4096,
+      "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "download": {"url": "https://objects.example/videos/delivery.mp4", "expiresAt": "2026-07-13T19:00:00Z"}
+    },
+    "processing": {
+      "analysisProfile": "DELIVERY_EVIDENCE_DEFAULT",
+      "expectedObjects": [],
+      "requestedOutputSchema": "m4trust.video-analysis-result",
+      "requestedOutputSchemaVersion": "1.0.0"
+    },
+    "deadlineAt": "2026-07-13T18:40:00Z"
+  }
+}

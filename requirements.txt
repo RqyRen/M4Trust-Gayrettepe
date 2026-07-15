@@ -1,0 +1,18 @@
+# M4Trust AI Service - runtime bağımlılıkları
+# NOT: İskelet aşaması. Sürümler ilk kod adımında (Adım 1-2) sabitlenecek.
+
+# Web / ai-api (operasyonel endpoint'ler)
+fastapi
+uvicorn[standard]
+
+# Messaging (RabbitMQ - ADR-002)
+pika
+
+# Contract validation (ADR-002 §24)
+jsonschema
+PyYAML
+
+# Config
+pydantic
+pydantic-settings
+python-dotenv

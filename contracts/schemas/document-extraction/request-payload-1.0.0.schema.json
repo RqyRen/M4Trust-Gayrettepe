@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/document-extraction/request-payload/1.0.0",
+  "title": "M4Trust Document Extraction Request Payload",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "documentId": {"type": "string", "format": "uuid"},
+        "fileName": {"type": "string", "minLength": 1},
+        "mediaType": {"type": "string", "minLength": 1},
+        "sizeBytes": {"type": "integer", "minimum": 0},
+        "sha256": {"type": "string", "pattern": "^[A-Fa-f0-9]{64}$"},
+        "download": {"$ref": "https://schemas.m4trust.internal/ai/common/download-reference/1.0.0"}
+      },
+      "required": ["documentId", "fileName", "mediaType", "sizeBytes", "sha256", "download"]
+    },
+    "processing": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "languageHints": {"type": "array", "items": {"type": "string", "minLength": 2}, "maxItems": 10},
+        "documentCategory": {"const": "B2B_CONTRACT"},
+        "requestedOutputSchema": {"const": "m4trust.document-extraction-result"},
+        "requestedOutputSchemaVersion": {"type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"},
+        "privacyProfile": {"const": "DEFAULT"},
+        "retrievalProfile": {"const": "M4TRUST_LEGAL_DEFAULT"}
+      },
+      "required": ["languageHints", "documentCategory", "requestedOutputSchema", "requestedOutputSchemaVersion", "privacyProfile", "retrievalProfile"]
+    },
+    "deadlineAt": {"$ref": "https://schemas.m4trust.internal/ai/common/utc-timestamp/1.0.0", "description": "RFC 3339 UTC processing deadline with trailing Z."}
+  },
+  "required": ["input", "processing", "deadlineAt"]
+}

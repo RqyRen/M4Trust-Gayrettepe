@@ -1,0 +1,9 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/common/utc-timestamp/1.0.0",
+  "title": "M4Trust UTC Wire Timestamp",
+  "description": "RFC 3339 date-time serialized in UTC with the required trailing uppercase Z.",
+  "type": "string",
+  "format": "date-time",
+  "pattern": "Z$"
+}

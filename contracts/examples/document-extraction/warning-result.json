@@ -1,0 +1,45 @@
+{
+  "eventId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "eventType": "ai.job.completed.v1",
+  "schemaVersion": "1.0.0",
+  "occurredAt": "2026-07-13T18:04:12Z",
+  "correlationId": "22222222-2222-4222-8222-222222222222",
+  "causationId": "77777777-7777-4777-8777-777777777777",
+  "jobId": "88888888-8888-4888-8888-888888888888",
+  "jobType": "DOCUMENT_EXTRACTION",
+  "tenantId": "44444444-4444-4444-8444-444444444444",
+  "transactionId": "99999999-9999-4999-8999-999999999999",
+  "subjectId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "idempotencyKey": "doc-full-2026-07-13-warning-result",
+  "producer": {"service": "m4trust-ai-worker", "version": "1.0.0"},
+  "payload": {
+    "result": {
+      "document": {
+        "detectedMediaType": "application/pdf",
+        "detectedLanguage": "tr",
+        "pageCount": 8,
+        "textExtractionMethod": "OCR",
+        "contentSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "parties": [],
+      "rules": [],
+      "deliveryRequirements": [],
+      "summary": {"requiresManualReview": true, "reviewReasons": ["LOW_TEXT_QUALITY"]}
+    },
+    "technicalMetadata": {
+      "pipelineVersion": "doc-pipeline-1.0.0",
+      "modelProvider": null,
+      "modelFamily": null,
+      "modelVersion": null,
+      "promptVersion": null,
+      "retrievalVersion": null,
+      "parserVersion": "parser-1.0.0",
+      "privacyVersion": "default-1",
+      "durationMs": 6800
+    },
+    "warnings": [
+      {"code": "OCR_USED", "message": "OCR was used because the source contained limited text structure.", "severity": "INFO", "path": "#/result/document/textExtractionMethod", "details": null},
+      {"code": "LOW_TEXT_QUALITY", "message": "Some extracted text may require manual review.", "severity": "WARNING", "path": "#/result", "details": {"field": "result", "reason": "source quality", "expected": "clear text", "observed": "low quality"}}
+    ]
+  }
+}

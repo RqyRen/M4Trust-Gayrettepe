@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.m4trust.internal/ai/video-analysis/failed-event/1.0.0",
+  "title": "M4Trust Video Analysis Failed Event",
+  "allOf": [
+    {"$ref": "https://schemas.m4trust.internal/ai/common/event-envelope/1.0.0"},
+    {
+      "type": "object",
+      "properties": {
+        "eventType": {"const": "ai.job.failed.v1"},
+        "jobType": {"const": "VIDEO_ANALYSIS"},
+        "schemaVersion": {"const": "1.0.0"},
+        "payload": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "error": {"$ref": "https://schemas.m4trust.internal/ai/common/error/1.0.0"},
+            "attempt": {"$ref": "https://schemas.m4trust.internal/ai/common/attempt/1.0.0"},
+            "technicalMetadata": {"$ref": "https://schemas.m4trust.internal/ai/common/technical-metadata/1.0.0"}
+          },
+          "required": ["error", "attempt", "technicalMetadata"]
+        }
+      },
+      "required": ["eventType", "jobType", "schemaVersion", "payload"]
+    }
+  ]
+}
