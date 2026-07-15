@@ -17,6 +17,12 @@ pypdf
 python-docx
 openai
 
+# OCR fallback (ADR-002 §3.1 "gerektiginde OCR")
+# NOT: tesseract-ocr binary + tur/eng dil paketleri host/image'da ayrica kurulmali.
+pytesseract
+PyMuPDF
+Pillow
+
 # Contract validation (ADR-002 §24)
 jsonschema
 PyYAML

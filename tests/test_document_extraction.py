@@ -16,8 +16,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 import docx
+import fitz  # PyMuPDF
 import pytest
 from fpdf import FPDF
+from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
 
 from app.contracts.errors import ContractViolation, ErrorCode, PipelineFailure
@@ -55,9 +57,63 @@ def _encrypted_pdf_bytes() -> bytes:
     return buffer.getvalue()
 
 
+def _text_image_bytes(lines: list[str], *, size: tuple[int, int] = (1200, 300)) -> bytes:
+    image = Image.new("RGB", size, "white")
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.truetype("C:/Windows/Fonts/arial.ttf", 40)
+    except OSError:
+        font = ImageFont.load_default()
+    for i, line in enumerate(lines):
+        draw.text((40, 40 + i * 70), line, fill="black", font=font)
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _scanned_pdf_bytes(lines: list[str]) -> bytes:
+    """Metin katmani OLMAYAN, sadece goruntu iceren bir sayfa - gercek
+    taranmis/fotograflanmis belgeyi simule eder."""
+    width, height = 1200, 300
+    image_bytes = _text_image_bytes(lines, size=(width, height))
+    doc = fitz.open()
+    page = doc.new_page(width=width, height=height)
+    page.insert_image(fitz.Rect(0, 0, width, height), stream=image_bytes)
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+def _blank_scanned_pdf_bytes() -> bytes:
+    """Tamamen bos (metinsiz) taranmis sayfa - OCR sonrasi da bos kalmali."""
+    width, height = 400, 300
+    image = Image.new("RGB", (width, height), "white")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    doc = fitz.open()
+    page = doc.new_page(width=width, height=height)
+    page.insert_image(fitz.Rect(0, 0, width, height), stream=buffer.getvalue())
+    pdf_bytes = doc.tobytes()
+    doc.close()
+    return pdf_bytes
+
+
+def _hybrid_pdf_bytes() -> bytes:
+    """1. sayfa dijital metin, 2. sayfa taranmis goruntu - karisik belge."""
+    digital = PdfWriter(clone_from=io.BytesIO(_real_pdf_bytes("Digital cover page with real text layer.")))
+    scanned = PdfWriter(clone_from=io.BytesIO(_scanned_pdf_bytes(["SCANNED PAGE: DELIVERY TERMS"])))
+    digital.append(scanned)
+    buffer = io.BytesIO()
+    digital.write(buffer)
+    return buffer.getvalue()
+
+
 _PDF_BYTES = _real_pdf_bytes()
 _DOCX_BYTES = _real_docx_bytes()
 _ENCRYPTED_PDF_BYTES = _encrypted_pdf_bytes()
+_SCANNED_PDF_BYTES = _scanned_pdf_bytes(["PAYMENT: Buyer pays 1000 EUR", "within 30 days of invoice date."])
+_BLANK_SCANNED_PDF_BYTES = _blank_scanned_pdf_bytes()
+_HYBRID_PDF_BYTES = _hybrid_pdf_bytes()
 _JUNK = b"just plain text, not a document"
 _MALFORMED_PDF = b"%PDF-1.7\n" + b"not a real pdf body, no xref table " * 20
 
@@ -67,6 +123,9 @@ _BODIES = {
     "/junk": _JUNK,
     "/malformed-pdf": _MALFORMED_PDF,
     "/encrypted": _ENCRYPTED_PDF_BYTES,
+    "/scanned": _SCANNED_PDF_BYTES,
+    "/blank-scanned": _BLANK_SCANNED_PDF_BYTES,
+    "/hybrid": _HYBRID_PDF_BYTES,
 }
 
 
@@ -212,6 +271,57 @@ def test_structured_value_fallback_produces_warning(base_url: str, monkeypatch: 
     assert rule["structuredValue"]["type"] == "TEXT"
     warnings = event["payload"]["warnings"]
     assert any(w["code"] == "STRUCTURED_VALUE_FALLBACK" for w in warnings)
+
+
+# --- OCR fallback (ADR-002 §3.1 "gerektiginde OCR") ---
+# NOT: gercek Tesseract calisir - free/local/no-network oldugu icin GPT gibi
+# mock-first kuralina tabi degil (ADR-004 §17'nin mock-first gerekcesi maliyet/
+# network bagimliligidir; Tesseract'ta bunlarin hicbiri yok).
+
+def test_scanned_pdf_triggers_real_ocr(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_llm(monkeypatch)
+    request = _request(base_url, "/scanned", _SCANNED_PDF_BYTES)
+    event = run(request)
+
+    validate_outgoing(event)
+    document = event["payload"]["result"]["document"]
+    assert document["textExtractionMethod"] == "OCR"
+
+    warnings = event["payload"]["warnings"]
+    assert any(w["code"] == "OCR_USED" for w in warnings)
+
+
+def test_hybrid_pdf_mixes_digital_and_ocr(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_llm(monkeypatch)
+    request = _request(base_url, "/hybrid", _HYBRID_PDF_BYTES)
+    event = run(request)
+
+    validate_outgoing(event)
+    document = event["payload"]["result"]["document"]
+    assert document["textExtractionMethod"] == "HYBRID"
+    assert document["pageCount"] == 2
+
+
+def test_blank_scanned_pdf_is_corrupted_file(base_url: str) -> None:
+    # OCR sonrasi da hicbir metin cikmiyorsa (bombos taranmis sayfa) reddedilir.
+    request = _request(base_url, "/blank-scanned", _BLANK_SCANNED_PDF_BYTES)
+    with pytest.raises(PipelineFailure) as exc:
+        run(request)
+    assert exc.value.code is ErrorCode.CORRUPTED_FILE
+
+
+def test_ocr_extracts_real_readable_text(tmp_path: Path) -> None:
+    from app.pipeline.document_extraction.text_extraction import extract_text
+
+    pdf_path = tmp_path / "scanned.pdf"
+    pdf_path.write_bytes(_SCANNED_PDF_BYTES)
+    extracted = extract_text(pdf_path, detected_media_type=PDF)
+
+    assert extracted.method == "OCR"
+    assert extracted.ocr_pages == (1,)
+    combined = extracted.full_text().upper()
+    assert "PAYMENT" in combined
+    assert "1000 EUR" in combined or "1000EUR" in combined.replace(" ", "")
 
 
 # --- Hata yollari ---
