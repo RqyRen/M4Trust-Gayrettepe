@@ -1,0 +1,5 @@
+# Yalniz local gelistirme/test icin. Production image'a dahil edilmez (ADR-007 §15).
+-r requirements.txt
+
+pytest
+fpdf2  # test fixture olarak gercek/gecerli minimal PDF uretmek icin

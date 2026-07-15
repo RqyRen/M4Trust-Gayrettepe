@@ -1,0 +1,163 @@
+"""LLM ciktisini canonical result objesine cevirir (ADR-002 SS8 sonuc contract'i).
+
+Model-native cevap burada tuketilip kaybolur; Spring yalnizca bu fonksiyonun
+urettigi canonical yapiyi gorur (ADR-002 SS8.1, SS10). Gecersiz/eksik LLM
+alanlari sessizce kabul edilmez; guvenli varsayilanlara duser ve bir warning
+uretir (ADR-002 SS13).
+
+Gizlilik notu (ADR-001 SS16): vergi kimlik numaralari bu asamada HER ZAMAN
+maskelenir (masked=true, value=null). Ayri, ozel bir PII maskeleme alt sistemi
+kurulmadan ham deger canonical ciktiya yazilmaz.
+"""
+from __future__ import annotations
+
+from datetime import date
+
+
+def _clamp_confidence(value) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return 0.5
+    return max(0.0, min(1.0, v))
+
+
+def _clamp_page(value) -> int:
+    try:
+        v = int(value)
+    except (TypeError, ValueError):
+        return 1
+    return max(1, v)
+
+
+def _source_references(page) -> list[dict]:
+    return [{"page": _clamp_page(page)}]
+
+
+def _map_party(item: dict, index: int) -> dict:
+    role = item.get("role") if item.get("role") in {"BUYER", "SELLER", "OTHER", "UNKNOWN"} else "UNKNOWN"
+    return {
+        "partyReference": f"party-{index + 1}",
+        "role": role,
+        "legalName": {
+            "value": (item.get("legalName") or "UNKNOWN").strip() or "UNKNOWN",
+            "confidence": _clamp_confidence(item.get("legalNameConfidence")),
+        },
+        # Vergi kimlik numarasi bilincli olarak her zaman maskelenir (bkz. modul docstring'i).
+        "taxIdentifier": {
+            "value": None,
+            "masked": True,
+            "confidence": _clamp_confidence(item.get("taxIdentifierConfidence")),
+        },
+        "sourceReferences": _source_references(item.get("page")),
+    }
+
+
+def _is_valid_date(value: str | None) -> bool:
+    if not value:
+        return False
+    try:
+        date.fromisoformat(value)
+        return True
+    except ValueError:
+        return False
+
+
+def _map_structured_value(item: dict, warnings: list[dict]) -> dict:
+    value_type = item.get("valueType")
+
+    if value_type == "MONEY" and isinstance(item.get("amountMinor"), int) and item.get("currency"):
+        return {"type": "MONEY", "amountMinor": item["amountMinor"], "currency": str(item["currency"]).upper()[:3]}
+
+    if value_type == "PERCENTAGE" and isinstance(item.get("basisPoints"), int) and 0 <= item["basisPoints"] <= 10000:
+        return {"type": "PERCENTAGE", "basisPoints": item["basisPoints"]}
+
+    if value_type == "DURATION_DAYS" and isinstance(item.get("durationDays"), int) and item["durationDays"] >= 0:
+        return {"type": "DURATION", "valueSeconds": item["durationDays"] * 86400}
+
+    if value_type == "DATE" and _is_valid_date(item.get("dateValue")):
+        return {"type": "DATE", "value": item["dateValue"]}
+
+    if value_type == "BOOLEAN" and isinstance(item.get("booleanValue"), bool):
+        return {"type": "BOOLEAN", "value": item["booleanValue"]}
+
+    if value_type == "QUANTITY" and isinstance(item.get("quantityValue"), (int, float)) and item.get("quantityUnit"):
+        return {"type": "QUANTITY", "value": float(item["quantityValue"]), "unit": str(item["quantityUnit"])}
+
+    if value_type == "TEXT" and item.get("textValue"):
+        return {"type": "TEXT", "value": str(item["textValue"])}
+
+    # Beklenmeyen/eksik degisken kombinasyonu: guvenli TEXT fallback + warning (ADR-002 SS13).
+    # `details` kapali bir yapidir (yalniz field/reason/expected/observed); ADR common warning schema.
+    warnings.append(
+        {
+            "code": "STRUCTURED_VALUE_FALLBACK",
+            "message": "Rule value did not match its declared type; fell back to TEXT.",
+            "severity": "WARNING",
+            "path": "$.result.rules",
+            "details": {
+                "field": "structuredValue",
+                "reason": "declared value type fields were missing or invalid",
+                "expected": str(value_type) if value_type else "unknown",
+                "observed": "TEXT fallback",
+            },
+        }
+    )
+    return {"type": "TEXT", "value": str(item.get("description") or item.get("title") or "")}
+
+
+def _map_rule(item: dict, index: int, warnings: list[dict]) -> dict:
+    category = item.get("category") if item.get("category") in {
+        "PAYMENT", "DELIVERY", "QUALITY", "PENALTY", "TERMINATION", "DISPUTE", "OTHER", "UNKNOWN"
+    } else "UNKNOWN"
+    return {
+        "ruleReference": f"rule-{index + 1}",
+        "category": category,
+        "title": (item.get("title") or "Untitled rule").strip() or "Untitled rule",
+        "description": (item.get("description") or "").strip() or "No description extracted.",
+        "structuredValue": _map_structured_value(item, warnings),
+        "confidence": _clamp_confidence(item.get("confidence")),
+        "sourceReferences": _source_references(item.get("page")),
+    }
+
+
+def _map_delivery_requirement(item: dict, index: int) -> dict:
+    evidence_type = item.get("evidenceType") if item.get("evidenceType") in {
+        "DELIVERY_NOTE", "INVOICE", "VIDEO", "PHOTO", "SIGNED_DOCUMENT", "OTHER", "UNKNOWN"
+    } else "UNKNOWN"
+    return {
+        "requirementReference": f"delivery-{index + 1}",
+        "evidenceType": evidence_type,
+        "required": bool(item.get("required", False)),
+        "confidence": _clamp_confidence(item.get("confidence")),
+        "sourceReferences": _source_references(item.get("page")),
+    }
+
+
+def map_to_canonical_result(llm_output: dict, *, document: dict) -> tuple[dict, list[dict]]:
+    """LLM ciktisini canonical `result` objesine cevirir.
+
+    `document` cagiran taraftan gelir (gercek indirme/hash/tur tespitinden
+    uretilmis degerler) — LLM'e guvenilmez.
+
+    Doner: (result, warnings)
+    """
+    warnings: list[dict] = []
+
+    parties = [_map_party(p, i) for i, p in enumerate(llm_output.get("parties") or [])]
+    rules = [_map_rule(r, i, warnings) for i, r in enumerate(llm_output.get("rules") or [])]
+    delivery_requirements = [
+        _map_delivery_requirement(d, i) for i, d in enumerate(llm_output.get("deliveryRequirements") or [])
+    ]
+
+    result = {
+        "document": document,
+        "parties": parties,
+        "rules": rules,
+        "deliveryRequirements": delivery_requirements,
+        "summary": {
+            "requiresManualReview": bool(llm_output.get("requiresManualReview", False)),
+            "reviewReasons": [str(r) for r in (llm_output.get("reviewReasons") or [])],
+        },
+    }
+    return result, warnings

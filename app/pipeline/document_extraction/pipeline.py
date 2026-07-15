@@ -1,79 +1,70 @@
-"""DOCUMENT_EXTRACTION pipeline (ADR-002 §3.1).
+"""DOCUMENT_EXTRACTION pipeline (ADR-002 SS3.1).
 
 ADR'deki adimlar ve mevcut durum:
   Dosya indirme            -> GERCEK (presigned URL, storage/object_store)
   Hash dogrulama           -> GERCEK (SHA-256; uyusmazlik retry edilmez)
   Dosya turu tespiti       -> GERCEK (magic byte)
-  PDF/DOCX metin cikarimi  -> MOCK (Adim 8: gercek parser)
-  OCR                      -> MOCK (Adim 8)
-  Metin normalizasyonu     -> MOCK (Adim 8)
-  Hassas veri analizi      -> MOCK (Adim 8)
-  Maskeleme                -> MOCK (Adim 8)
-  RAG                      -> MOCK (Adim 8)
-  LLM extraction           -> MOCK (Adim 8)
-  Canonical schema donusumu-> GERCEK (canonical payload uretilir)
+  PDF/DOCX metin cikarimi  -> GERCEK (pypdf / python-docx, text_extraction.py)
+  OCR                      -> KAPSAM DISI (yalniz dijital PDF/DOCX; taranmis
+                               belgeler icin ayri bir gelistirme gerekir)
+  Metin normalizasyonu     -> KAPSAM DISI (ilk surumde yapilmiyor)
+  Hassas veri analizi      -> KISMEN: vergi kimlik numaralari daima maskelenir
+                               (mapping.py); genel PII taramasi kapsam disi
+  Maskeleme                -> KISMEN (yukaridaki gibi, sinirli kapsam)
+  RAG                      -> KAPSAM DISI (ilk surumde retrieval kullanilmiyor)
+  LLM extraction           -> GERCEK (GPT-5.4, llm.py)
+  Canonical schema donusumu-> GERCEK (mapping.py)
   Teknik schema validation -> GERCEK (yayindan once dogrulanir)
 
-Mock asamalar deterministik fixture uretir; gercek LLM/OCR/RAG CALISTIRILMAZ
-(ADR-004 §12). Gercek model entegrasyonu bu modulun mock asamalarinin yerini
-alacak; canonical payload ve contract DEGISMEYECEK (ADR-002 §26).
+Model-native cevap (GPT ham JSON'u) yalniz bu modul icinde tuketilir; Spring'e
+asla ulasmaz (ADR-002 SS8.1, SS10). Model/provider degisikligi (ADR-002 SS26)
+bu dosyanin disina sizmadan yapilabilir.
 """
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
 
 from app.config import get_settings
 from app.contracts.validation import validate_outgoing
-from app.pipeline.document_extraction.media import EXTRACTION_METHOD, detect_media_type
+from app.pipeline.document_extraction import llm, mapping
+from app.pipeline.document_extraction.media import detect_media_type
+from app.pipeline.document_extraction.text_extraction import extract_text
 from app.storage.object_store import fetch_source
 
-_FIXTURE = (
-    Path(__file__).resolve().parents[3] / "contracts" / "examples" / "document-extraction" / "success-result.json"
-)
-
-PIPELINE_VERSION = "doc-pipeline-1.0.0"
+PIPELINE_VERSION = "doc-pipeline-1.1.0"
+PROMPT_VERSION = "contract-extraction-1.0.0"
 
 
 def _utc_now_z() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def _mock_extraction(path: Path, detected_media_type: str, content_sha256: str) -> dict:
-    """MOCK: gercek parser/OCR/RAG/LLM yerine deterministik canonical sonuc.
-
-    Adim 8'de bu fonksiyonun yerini gercek pipeline alacak. Ancak DONUS TIPI
-    ayni kalacak: canonical `result` objesi.
-    """
-    fixture_result = json.loads(_FIXTURE.read_text(encoding="utf-8"))["payload"]["result"]
-
-    # Gercek olarak tespit edilen degerleri canonical sonuca yaz.
-    document = dict(fixture_result["document"])
-    document["detectedMediaType"] = detected_media_type
-    document["textExtractionMethod"] = EXTRACTION_METHOD[detected_media_type]
-    document["contentSha256"] = content_sha256
-
-    result = dict(fixture_result)
-    result["document"] = document
-    return result
-
-
 def run(request: dict) -> dict:
     """Request envelope'undan canonical `ai.job.completed.v1` event'i uretir.
 
-    Firlatir: PipelineFailure — indirme/hash/tur hatalarinda (retry runner ele alir).
+    Firlatir: PipelineFailure — indirme/hash/tur/parse/LLM hatalarinda
+    (retry runner ele alir).
     """
     started = time.monotonic()
+    settings = get_settings()
     source_input = request["payload"]["input"]
     expected_sha256 = source_input["sha256"].lower()
 
-    # Indirme + hash dogrulama + tur tespiti; context'ten cikinca gecici kopya silinir.
     with fetch_source(source_input) as path:
         detected_media_type = detect_media_type(path, declared=source_input["mediaType"])
-        result = _mock_extraction(path, detected_media_type, expected_sha256)
+        extracted = extract_text(path, detected_media_type=detected_media_type)
+        llm_output = llm.extract_structured_data(extracted.full_text(), settings)
+
+    document = {
+        "detectedMediaType": detected_media_type,
+        "detectedLanguage": (llm_output.get("detectedLanguage") or "und")[:8],
+        "pageCount": extracted.page_count,
+        "textExtractionMethod": extracted.method,
+        "contentSha256": expected_sha256,
+    }
+    result, mapping_warnings = mapping.map_to_canonical_result(llm_output, document=document)
 
     duration_ms = int((time.monotonic() - started) * 1000)
 
@@ -90,24 +81,24 @@ def run(request: dict) -> dict:
         "transactionId": request["transactionId"],
         "subjectId": request["subjectId"],
         "idempotencyKey": f"result:{request['jobId']}",
-        "producer": {"service": "m4trust-ai-worker", "version": get_settings().service_version},
+        "producer": {"service": "m4trust-ai-worker", "version": settings.service_version},
         "payload": {
             "result": result,
             "technicalMetadata": {
                 "pipelineVersion": PIPELINE_VERSION,
-                "modelProvider": None,   # mock asamada gercek provider yok
-                "modelFamily": None,
-                "modelVersion": None,
-                "promptVersion": None,
-                "retrievalVersion": None,
-                "parserVersion": None,
-                "privacyVersion": None,
+                "modelProvider": "openai",
+                "modelFamily": "gpt-5.4",
+                "modelVersion": settings.openai_model,
+                "promptVersion": PROMPT_VERSION,
+                "retrievalVersion": None,  # RAG bu surumde kullanilmiyor
+                "parserVersion": "pypdf+python-docx",
+                "privacyVersion": "tax-id-mask-only-1.0.0",
                 "durationMs": duration_ms,
             },
-            "warnings": [],
+            "warnings": mapping_warnings,
         },
     }
 
-    # Teknik schema validation: schema-invalid event broker'a cikmaz (ADR-002 §11).
+    # Teknik schema validation: schema-invalid event broker'a cikmaz (ADR-002 SS11).
     validate_outgoing(event)
     return event

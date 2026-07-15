@@ -12,6 +12,11 @@ pika
 # NOT: object storage'a genel SDK erisimi YOK; sadece HTTP GET.
 httpx
 
+# Document extraction: metin cikarimi + LLM (ADR-002 §3.1, ADR-004 §16)
+pypdf
+python-docx
+openai
+
 # Contract validation (ADR-002 §24)
 jsonschema
 PyYAML

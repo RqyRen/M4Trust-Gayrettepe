@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     download_max_bytes: int = 256 * 1024 * 1024  # 256 MiB
     download_chunk_bytes: int = 1024 * 1024
 
+    # LLM tabanli document extraction (ADR-004 SS16 - Yusuf'un serbest model secimi)
+    # Secret; .env disinda hicbir yerde literal olarak yazilmaz (ADR-007 SS19).
+    openai_api_key: str = ""
+    openai_model: str = "gpt-5.4"
+    openai_timeout_seconds: float = 60.0
+    openai_max_source_chars: int = 60_000  # asiri uzun dokuman icin prompt sinirlamasi
+
 
 @lru_cache
 def get_settings() -> Settings:
