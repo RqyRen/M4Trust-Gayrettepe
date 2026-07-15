@@ -7,13 +7,12 @@ from __future__ import annotations
 
 from typing import Callable
 
-from app.pipeline import fake
 from app.pipeline.document_extraction import pipeline as document_extraction
+from app.pipeline.video_analysis import pipeline as video_analysis
 
-# VIDEO_ANALYSIS su an fake; Adim 7'de gercek pipeline ile degisecek.
 PIPELINES: dict[str, Callable[[dict], dict]] = {
     "DOCUMENT_EXTRACTION": document_extraction.run,
-    "VIDEO_ANALYSIS": fake.build_completed_event,
+    "VIDEO_ANALYSIS": video_analysis.run,
 }
 
 
