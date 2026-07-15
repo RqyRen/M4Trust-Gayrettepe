@@ -75,6 +75,24 @@ def retry_recommended_for(code: ErrorCode) -> bool:
     return code in _RETRYABLE_CODES
 
 
+class PipelineFailure(Exception):
+    """Pipeline teknik hatasi (ADR-002 §12).
+
+    `details` contract'ta sinirli bir objedir; sadece field/reason/dependency/
+    retryAfterMs/limit anahtarlarina izin verilir. Ham stack trace, provider
+    mesaji veya PII TASINMAZ (ADR-002 §12.3).
+    """
+
+    def __init__(self, code: ErrorCode, message: str, details: dict | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.category = category_for(code)
+        self.message = message
+        self.details = details
+        # Retry runner tarafindan doldurulur.
+        self.attempt_number = 1
+
+
 class ContractViolation(Exception):
     """Gelen mesaj contract'a uymuyor.
 
