@@ -26,6 +26,14 @@ class Settings(BaseSettings):
     # Desteklenen contract major/schema version'lari (ADR-002 §15, §21.3)
     supported_schema_versions: tuple[str, ...] = ("1.0.0",)
 
+    # RabbitMQ (ADR-002 §5) — local default'lar, prod environment'tan gelir
+    rabbitmq_host: str = "localhost"
+    rabbitmq_port: int = 5672
+    rabbitmq_user: str = "guest"
+    rabbitmq_password: str = "guest"
+    rabbitmq_vhost: str = "/"
+    worker_prefetch: int = 8
+
 
 @lru_cache
 def get_settings() -> Settings:

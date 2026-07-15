@@ -70,6 +70,31 @@ tests/                    mock-first minimum kritik testler
 | 5 | Video analysis (mock canonical result) |
 | 6 | Gerçek AI entegrasyonu: RAG + LLM + OCR + video model (contract sabit kalır) |
 
+## Local çalıştırma
+
+```powershell
+# 1) Altyapı (RabbitMQ + MinIO)
+docker compose up -d
+
+# 2) Bağımlılıklar
+python -m venv .venv
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 3) ai-api (operasyonel endpoint'ler)
+.venv\Scripts\python.exe -m uvicorn app.main:app --port 8000
+
+# 4) ai-worker (RabbitMQ command tüketici)
+.venv\Scripts\python.exe -m app.worker
+```
+
+RabbitMQ management UI: http://localhost:15672 · MinIO console: http://localhost:9001
+
+Testler:
+
+```powershell
+.venv\Scripts\python.exe -m pytest tests/ -q
+```
+
 ## Contracts senkronu
 
 `contracts/` klasörü Spring reposundaki ortak sözleşmenin kopyasıdır. Değiştiğinde her iki repoda güncellenir.
