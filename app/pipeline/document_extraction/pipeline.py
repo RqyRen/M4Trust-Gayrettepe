@@ -42,6 +42,32 @@ def _utc_now_z() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _truncation_warning(full_text: str, settings) -> dict | None:
+    """Prompt sinirini asan belgelerde uyari uretir (ADR-002 SS13).
+
+    Kanit (Adim 8 kalite testi, 15 Temmuz 2026): 70.108 karakterlik gercekci
+    bir sozlesmede, cikarilan metin (72.865 karakter) 60.000 karakter
+    sinirinda kesiliyor ve belgenin SONUNDAKI benzersiz bir madde (750.000 TL
+    cezai sart) GPT'ye HIC gonderilmeden kayboluyordu, hicbir warning
+    uretilmeden. Bu fonksiyon o sessiz kaybi engeller.
+    """
+    limit = settings.openai_max_source_chars
+    if len(full_text) <= limit:
+        return None
+    return {
+        "code": "PARTIAL_TEXT_EXTRACTION",
+        "message": "Document text exceeded the processing limit; content beyond the limit was not sent to the model.",
+        "severity": "WARNING",
+        "path": "$.result",
+        "details": {
+            "field": "input.document",
+            "reason": "source text exceeded configured character limit",
+            "expected": f"<= {limit} characters",
+            "observed": f"{len(full_text)} characters",
+        },
+    }
+
+
 def _ocr_warnings(extracted: ExtractedDocument) -> list[dict]:
     """OCR fallback kullanildiysa canonical warning uretir (ADR-002 SS13)."""
     if not extracted.ocr_pages:
@@ -76,7 +102,9 @@ def run(request: dict) -> dict:
     with fetch_source(source_input) as path:
         detected_media_type = detect_media_type(path, declared=source_input["mediaType"])
         extracted = extract_text(path, detected_media_type=detected_media_type)
-        llm_output = llm.extract_structured_data(extracted.full_text(), settings)
+        full_text = extracted.full_text()
+        truncation_warning = _truncation_warning(full_text, settings)
+        llm_output = llm.extract_structured_data(full_text, settings)
 
     document = {
         "detectedMediaType": detected_media_type,
@@ -87,6 +115,17 @@ def run(request: dict) -> dict:
     }
     result, mapping_warnings = mapping.map_to_canonical_result(llm_output, document=document)
     warnings = mapping_warnings + _ocr_warnings(extracted)
+
+    if truncation_warning is not None:
+        warnings.append(truncation_warning)
+        # Pasif warning yetmez: kaybolan icerik gercek is kurali tasiyor olabilir
+        # (kanitlandi - bkz. _truncation_warning docstring'i). Aktif olarak
+        # manual review'a zorla.
+        result["summary"]["requiresManualReview"] = True
+        result["summary"]["reviewReasons"] = [
+            "Document text exceeded the processing limit; some content was not analyzed.",
+            *result["summary"]["reviewReasons"],
+        ]
 
     duration_ms = int((time.monotonic() - started) * 1000)
 

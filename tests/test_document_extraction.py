@@ -229,6 +229,29 @@ def test_pdf_pipeline_produces_schema_valid_completed_event(base_url: str, monke
     assert document["contentSha256"] == hashlib.sha256(_PDF_BYTES).hexdigest()
 
 
+def test_truncated_document_produces_warning_and_forces_review(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # ADR-002 §13: prompt sinirini asan belgede sessiz veri kaybi OLMAMALI.
+    # Kanit: 15 Temmuz 2026 kalite testinde, kesme yuzunden gercek bir
+    # 750.000 TL'lik ceza maddesi warning'siz kayboluyordu (bkz. pipeline.py
+    # _truncation_warning docstring'i). Bu test o senaryoyu simule eder.
+    from app.config import get_settings
+
+    _mock_llm(monkeypatch)
+    settings = get_settings()
+    monkeypatch.setattr(settings, "openai_max_source_chars", 50)  # _PDF_BYTES metninden kucuk
+
+    request = _request(base_url, "/pdf", _PDF_BYTES)
+    event = run(request)
+
+    validate_outgoing(event)
+    warnings = event["payload"]["warnings"]
+    assert any(w["code"] == "PARTIAL_TEXT_EXTRACTION" for w in warnings)
+
+    summary = event["payload"]["result"]["summary"]
+    assert summary["requiresManualReview"] is True
+    assert any("processing limit" in reason for reason in summary["reviewReasons"])
+
+
 def test_docx_pipeline_produces_schema_valid_completed_event(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_llm(monkeypatch)
     request = _request(base_url, "/docx", _DOCX_BYTES, media_type=DOCX)
