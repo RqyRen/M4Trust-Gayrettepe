@@ -5,8 +5,9 @@ ADR'deki adimlar ve mevcut durum:
   Hash dogrulama           -> GERCEK (SHA-256; uyusmazlik retry edilmez)
   Dosya turu tespiti       -> GERCEK (magic byte)
   PDF/DOCX metin cikarimi  -> GERCEK (pypdf / python-docx, text_extraction.py)
-  OCR                      -> KAPSAM DISI (yalniz dijital PDF/DOCX; taranmis
-                               belgeler icin ayri bir gelistirme gerekir)
+  OCR                      -> GERCEK (Tesseract, tur+eng; sayfa dijital metin
+                               esiginin altindaysa otomatik devreye girer,
+                               HYBRID/OCR olarak isaretlenir, OCR_USED warning)
   Metin normalizasyonu     -> KAPSAM DISI (ilk surumde yapilmiyor)
   Hassas veri analizi      -> KISMEN: vergi kimlik numaralari daima maskelenir
                                (mapping.py); genel PII taramasi kapsam disi
@@ -30,7 +31,7 @@ from app.config import get_settings
 from app.contracts.validation import validate_outgoing
 from app.pipeline.document_extraction import llm, mapping
 from app.pipeline.document_extraction.media import detect_media_type
-from app.pipeline.document_extraction.text_extraction import extract_text
+from app.pipeline.document_extraction.text_extraction import ExtractedDocument, extract_text
 from app.storage.object_store import fetch_source
 
 PIPELINE_VERSION = "doc-pipeline-1.1.0"
@@ -39,6 +40,26 @@ PROMPT_VERSION = "contract-extraction-1.0.0"
 
 def _utc_now_z() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ocr_warnings(extracted: ExtractedDocument) -> list[dict]:
+    """OCR fallback kullanildiysa canonical warning uretir (ADR-002 SS13)."""
+    if not extracted.ocr_pages:
+        return []
+    return [
+        {
+            "code": "OCR_USED",
+            "message": "OCR was used to extract text from one or more pages with no digital text layer.",
+            "severity": "INFO",
+            "path": "$.result.document",
+            "details": {
+                "field": "document.textExtractionMethod",
+                "reason": "digital text layer was missing or too short",
+                "expected": "DIGITAL_PDF",
+                "observed": f"OCR used on page(s): {', '.join(str(p) for p in extracted.ocr_pages)}",
+            },
+        }
+    ]
 
 
 def run(request: dict) -> dict:
@@ -65,6 +86,7 @@ def run(request: dict) -> dict:
         "contentSha256": expected_sha256,
     }
     result, mapping_warnings = mapping.map_to_canonical_result(llm_output, document=document)
+    warnings = mapping_warnings + _ocr_warnings(extracted)
 
     duration_ms = int((time.monotonic() - started) * 1000)
 
@@ -95,7 +117,7 @@ def run(request: dict) -> dict:
                 "privacyVersion": "tax-id-mask-only-1.0.0",
                 "durationMs": duration_ms,
             },
-            "warnings": mapping_warnings,
+            "warnings": warnings,
         },
     }
 
