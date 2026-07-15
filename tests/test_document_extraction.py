@@ -273,6 +273,32 @@ def test_tax_identifier_is_always_masked(base_url: str, monkeypatch: pytest.Monk
     assert party["taxIdentifier"]["value"] is None
 
 
+def test_duplicate_party_mentions_are_merged(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # Bulgu (gercek sozlesme testi, 15 Temmuz 2026): ayni sirket baslikta ve
+    # imza blogunda hafif farkli bicimlendirmeyle gectiginde LLM iki ayri
+    # taraf cikarabiliyordu (ornek: "LTD.STI." vs "LTD. STI.").
+    output = json.loads(json.dumps(_CANNED_LLM_OUTPUT))
+    output["parties"] = [
+        {"role": "SELLER", "legalName": "ACME Corp.", "legalNameConfidence": 0.9, "taxIdentifier": None, "taxIdentifierConfidence": 0.0, "page": 1},
+        {"role": "SELLER", "legalName": "ACME  Corp.", "legalNameConfidence": 0.99, "taxIdentifier": None, "taxIdentifierConfidence": 0.0, "page": 3},
+        {"role": "BUYER", "legalName": "Beta Trading Ltd", "legalNameConfidence": 0.95, "taxIdentifier": None, "taxIdentifierConfidence": 0.0, "page": 1},
+    ]
+    _mock_llm(monkeypatch, output)
+
+    request = _request(base_url, "/pdf", _PDF_BYTES)
+    event = run(request)
+    validate_outgoing(event)
+
+    parties = event["payload"]["result"]["parties"]
+    assert len(parties) == 2  # iki ACME kaydi tek partiye birlesti
+    seller = next(p for p in parties if p["role"] == "SELLER")
+    assert seller["legalName"]["confidence"] == 0.99  # yuksek confidence'li versiyon tutuldu
+    assert {r["page"] for r in seller["sourceReferences"]} == {1, 3}  # her iki sayfa da korundu
+
+    warnings = event["payload"]["warnings"]
+    assert any(w["code"] == "DUPLICATE_PARTY_MERGED" for w in warnings)
+
+
 def test_money_rule_mapped_correctly(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_llm(monkeypatch)
     request = _request(base_url, "/pdf", _PDF_BYTES)

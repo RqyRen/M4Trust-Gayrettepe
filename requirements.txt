@@ -29,7 +29,10 @@ Pillow
 opencv-python-headless
 
 # Contract validation (ADR-002 §24)
+# NOT: referencing acikca kullanilir (schema_store.py) - deprecated
+# RefResolver'in scope-stack bug'ini onlemek icin modern Registry API'si.
 jsonschema
+referencing
 PyYAML
 
 # Config

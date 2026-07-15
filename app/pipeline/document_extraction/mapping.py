@@ -11,6 +11,7 @@ kurulmadan ham deger canonical ciktiya yazilmaz.
 """
 from __future__ import annotations
 
+import re
 from datetime import date
 
 
@@ -51,6 +52,59 @@ def _map_party(item: dict, index: int) -> dict:
         },
         "sourceReferences": _source_references(item.get("page")),
     }
+
+
+def _normalize_name(value: str) -> str:
+    return re.sub(r"[\s.,]+", " ", value).strip().lower()
+
+
+def _dedupe_parties(parties: list[dict], warnings: list[dict]) -> list[dict]:
+    """Ayni rol + normalize edilmis ayni isimdeki taraflari tekillestirir.
+
+    Bulgu (gercek sozlesme testi, 15 Temmuz 2026): ayni sirket belgede
+    birden fazla yerde (baslik + imza blogu gibi) hafif farkli
+    bicimlendirmeyle (bosluk/nokta farki) gectiginde LLM bunu iki ayri
+    taraf olarak cikarabiliyordu. Bu fonksiyon SADECE tam normalize-esit
+    isimleri birlestirir; farkli gorunen isimleri riskli tahminle
+    birlestirmez. Birincil savunma llm.py SYSTEM_PROMPT'undaki acik
+    talimattir; bu ikincil bir guvenlik agidir.
+    """
+    merged: dict[tuple[str, str], dict] = {}
+    order: list[tuple[str, str]] = []
+    for party in parties:
+        key = (party["role"], _normalize_name(party["legalName"]["value"]))
+        if key not in merged:
+            merged[key] = party
+            order.append(key)
+            continue
+        existing = merged[key]
+        if party["legalName"]["confidence"] > existing["legalName"]["confidence"]:
+            existing["legalName"] = party["legalName"]
+        existing_pages = {ref["page"] for ref in existing["sourceReferences"]}
+        for ref in party["sourceReferences"]:
+            if ref["page"] not in existing_pages:
+                existing["sourceReferences"].append(ref)
+                existing_pages.add(ref["page"])
+
+    deduped = [merged[key] for key in order]
+    if len(deduped) < len(parties):
+        warnings.append(
+            {
+                "code": "DUPLICATE_PARTY_MERGED",
+                "message": "The same legal entity was mentioned multiple times and merged into a single party.",
+                "severity": "INFO",
+                "path": "$.result.parties",
+                "details": {
+                    "field": "parties",
+                    "reason": "duplicate legal entity mentions",
+                    "expected": f"{len(parties)} raw mentions",
+                    "observed": f"{len(deduped)} unique parties",
+                },
+            }
+        )
+    for i, party in enumerate(deduped):
+        party["partyReference"] = f"party-{i + 1}"
+    return deduped
 
 
 def _is_valid_date(value: str | None) -> bool:
@@ -145,6 +199,7 @@ def map_to_canonical_result(llm_output: dict, *, document: dict) -> tuple[dict, 
     warnings: list[dict] = []
 
     parties = [_map_party(p, i) for i, p in enumerate(llm_output.get("parties") or [])]
+    parties = _dedupe_parties(parties, warnings)
     rules = [_map_rule(r, i, warnings) for i, r in enumerate(llm_output.get("rules") or [])]
     delivery_requirements = [
         _map_delivery_requirement(d, i) for i, d in enumerate(llm_output.get("deliveryRequirements") or [])

@@ -28,7 +28,13 @@ information that is not present in the text. Preserve original-language wording 
 legalName, title, and description fields (do not translate). Every extracted item must
 reference the page number (marked as [PAGE n] in the source text) where it was found.
 Confidence must reflect genuine extraction certainty (0.0-1.0), not always 1.0.
-This output is advisory only; a downstream business system independently validates it."""
+This output is advisory only; a downstream business system independently validates it.
+
+If the same legal entity (party) is mentioned multiple times in the document (e.g. once
+in a header/preamble and again in a signature block, with a slightly different or more
+complete form of its name), extract it as ONE party entry only, using the most complete
+legal name found, not one entry per mention. Only list a party twice if the text
+genuinely describes two distinct legal entities with different names."""
 
 _RULE_VALUE_TYPES = ["TEXT", "MONEY", "PERCENTAGE", "DURATION_DAYS", "DATE", "BOOLEAN", "QUANTITY"]
 
