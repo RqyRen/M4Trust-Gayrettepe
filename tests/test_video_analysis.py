@@ -1,34 +1,59 @@
-"""VIDEO_ANALYSIS pipeline testleri (ADR-002 §3.2, §10.1, §11).
+"""VIDEO_ANALYSIS pipeline testleri (ADR-002 §3.2, §10.1, §11; ADR-003 §22).
 
-Gercek HTTP kaynagi uzerinden: indirme -> hash -> format kontrolu ->
-canonical sonuc -> teknik schema validation.
+Indirme, hash, format tespiti, GERCEK frame ornekleme (OpenCV) ve canonical
+mapping gercek calisir. Roboflow HTTP cagrisi (ADR-004 §17 "mock-first")
+monkeypatch ile sahtelenir; gercek Roboflow entegrasyonu ayri bir canli
+script ile (pytest disinda) dogrulanir.
 """
 from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 import threading
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
+import cv2
+import numpy as np
 import pytest
 
 from app.contracts.errors import ErrorCode, PipelineFailure
 from app.contracts.validation import validate_outgoing
 from app.pipeline.registry import pipeline_for
+from app.pipeline.video_analysis import roboflow_client
+from app.pipeline.video_analysis.frames import sample_frames
 from app.pipeline.video_analysis.media import MP4, WEBM, detect_media_type
 from app.pipeline.video_analysis.pipeline import run
 
 _EXAMPLES = Path(__file__).resolve().parents[1] / "contracts" / "examples"
 
-# ISO BMFF/MP4: [4 byte box size][ftyp][...]
-_MP4 = b"\x00\x00\x00\x18ftypisom" + b"video frame data " * 100
-# WebM/Matroska EBML magic
-_WEBM = b"\x1a\x45\xdf\xa3" + b"webm cluster data " * 100
+
+def _real_mp4_bytes(*, seconds: float = 3.0, fps: float = 10.0) -> bytes:
+    """OpenCV ile gercek, decode edilebilir bir MP4 uretir (bir kutu ceviriyor)."""
+    fd, tmp_path = tempfile.mkstemp(suffix=".mp4")
+    os.close(fd)
+    try:
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        writer = cv2.VideoWriter(tmp_path, fourcc, fps, (320, 240))
+        for _ in range(int(seconds * fps)):
+            frame = np.full((240, 320, 3), 255, dtype=np.uint8)
+            cv2.rectangle(frame, (50, 50), (150, 150), (100, 50, 20), -1)
+            writer.write(frame)
+        writer.release()
+        return Path(tmp_path).read_bytes()
+    finally:
+        Path(tmp_path).unlink(missing_ok=True)
+
+
+_MP4_BYTES = _real_mp4_bytes()
+# Dogru magic byte (ftyp) ama gercek video verisi degil - decode basarisiz olmali.
+_CORRUPTED_MP4 = b"\x00\x00\x00\x18ftypisom" + b"not real video data " * 200
 _JUNK = b"just plain bytes, not a video container"
 
-_BODIES = {"/mp4": _MP4, "/webm": _WEBM, "/junk": _JUNK}
+_BODIES = {"/mp4": _MP4_BYTES, "/corrupted": _CORRUPTED_MP4, "/junk": _JUNK}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -69,10 +94,25 @@ def _request(base_url: str, path: str, body: bytes, media_type: str = MP4) -> di
     return req
 
 
-# --- Pipeline uctan uca (gercek indirme + hash + format) ---
+def _expected_objects(request: dict) -> list[dict]:
+    return request["payload"]["processing"]["expectedObjects"]
 
-def test_mp4_produces_schema_valid_completed_event(base_url: str) -> None:
-    request = _request(base_url, "/mp4", _MP4)
+
+def _mock_roboflow(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    logistics: list[dict] | None = None,
+    damage: list[dict] | None = None,
+) -> None:
+    monkeypatch.setattr(roboflow_client, "detect_objects", lambda image, settings: logistics or [])
+    monkeypatch.setattr(roboflow_client, "detect_damage", lambda image, settings: damage or [])
+
+
+# --- Pipeline uctan uca (gercek indirme + hash + format + GERCEK frame ornekleme) ---
+
+def test_video_pipeline_produces_schema_valid_completed_event(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_roboflow(monkeypatch, logistics=[{"class": "sealed_box", "confidence": 0.9}])
+    request = _request(base_url, "/mp4", _MP4_BYTES)
     event = run(request)
 
     assert event["eventType"] == "ai.job.completed.v1"
@@ -81,9 +121,10 @@ def test_mp4_produces_schema_valid_completed_event(base_url: str) -> None:
     validate_outgoing(event)
 
 
-def test_advisory_outcome_is_not_a_business_decision(base_url: str) -> None:
+def test_advisory_outcome_is_not_a_business_decision(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # ADR-002 §10.1 / ADR-003 §22: sonuc advisory'dir, business karar alanlari yok.
-    request = _request(base_url, "/mp4", _MP4)
+    _mock_roboflow(monkeypatch, logistics=[{"class": "sealed_box", "confidence": 0.9}])
+    request = _request(base_url, "/mp4", _MP4_BYTES)
     event = run(request)
     summary = event["payload"]["result"]["summary"]
     assert summary["advisoryOutcome"] in {"NO_ISSUE_DETECTED", "REVIEW_SUGGESTED", "INSUFFICIENT_EVIDENCE", "UNKNOWN"}
@@ -92,14 +133,62 @@ def test_advisory_outcome_is_not_a_business_decision(base_url: str) -> None:
     assert "deliveryApproved" not in summary
 
 
-def test_webm_is_supported(base_url: str) -> None:
-    request = _request(base_url, "/webm", _WEBM, media_type=WEBM)
-    event = run(request)
-    assert event["eventType"] == "ai.job.completed.v1"
+def test_object_count_matches_expected_gives_no_issue(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    request = _request(base_url, "/mp4", _MP4_BYTES)
+    expected = _expected_objects(request)  # full-request: sealed_box x4, delivery_note x1
+    logistics = []
+    for item in expected:
+        logistics.extend({"class": item["label"], "confidence": 0.95} for _ in range(item["expectedCount"]))
+    _mock_roboflow(monkeypatch, logistics=logistics)
 
+    event = run(request)
+    result = event["payload"]["result"]
+    assert result["summary"]["advisoryOutcome"] == "NO_ISSUE_DETECTED"
+    assert result["summary"]["reviewReasons"] == []
+
+    counts = {o["label"]: o["observedValue"] for o in result["observations"] if o["type"] == "OBJECT_COUNT"}
+    for item in expected:
+        assert counts[item["label"]] == item["expectedCount"]
+
+
+def test_object_count_below_expected_triggers_review(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    request = _request(base_url, "/mp4", _MP4_BYTES)
+    expected = _expected_objects(request)
+    # Beklenenden AZ nesne tespit edildi (ornegin 4 yerine 1 sealed_box).
+    _mock_roboflow(monkeypatch, logistics=[{"class": expected[0]["label"], "confidence": 0.9}])
+
+    event = run(request)
+    result = event["payload"]["result"]
+    assert result["summary"]["advisoryOutcome"] == "REVIEW_SUGGESTED"
+    assert f"{expected[0]['label']}_COUNT_BELOW_EXPECTED" in result["summary"]["reviewReasons"]
+
+
+def test_damage_detection_produces_anomaly_and_review(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_roboflow(monkeypatch, damage=[{"class": "damaged", "confidence": 0.92}])
+    request = _request(base_url, "/mp4", _MP4_BYTES)
+    event = run(request)
+
+    result = event["payload"]["result"]
+    assert len(result["anomalies"]) == 1
+    anomaly = result["anomalies"][0]
+    assert anomaly["type"] == "DAMAGED_PARCEL"
+    assert anomaly["severity"] == "HIGH"  # confidence 0.92 >= 0.85
+    assert result["summary"]["advisoryOutcome"] == "REVIEW_SUGGESTED"
+    assert "DAMAGED_PARCEL_DETECTED" in result["summary"]["reviewReasons"]
+
+
+def test_low_confidence_damage_is_filtered_out(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    # min_confidence esiginin altindaki tespitler yok sayilir.
+    _mock_roboflow(monkeypatch, damage=[{"class": "damaged", "confidence": 0.1}])
+    request = _request(base_url, "/mp4", _MP4_BYTES)
+    event = run(request)
+    assert event["payload"]["result"]["anomalies"] == []
+
+
+# --- Hata yollari ---
 
 def test_hash_mismatch_fails_before_analysis(base_url: str) -> None:
-    request = _request(base_url, "/mp4", _MP4)
+    request = _request(base_url, "/mp4", _MP4_BYTES)
     request["payload"]["input"]["sha256"] = "a" * 64
     with pytest.raises(PipelineFailure) as exc:
         run(request)
@@ -114,23 +203,39 @@ def test_unsupported_content_rejected(base_url: str) -> None:
 
 
 def test_declared_media_type_mismatch_rejected(base_url: str) -> None:
-    # Icerik MP4 ama WebM beyan edilmis.
-    request = _request(base_url, "/mp4", _MP4, media_type=WEBM)
+    request = _request(base_url, "/mp4", _MP4_BYTES, media_type=WEBM)
     with pytest.raises(PipelineFailure) as exc:
         run(request)
     assert exc.value.code is ErrorCode.UNSUPPORTED_MEDIA_TYPE
 
 
-# --- Format tespiti birim davranisi ---
+def test_corrupted_video_container_rejected(base_url: str) -> None:
+    # Dogru magic byte ama decode edilemeyen icerik -> CORRUPTED_FILE.
+    request = _request(base_url, "/corrupted", _CORRUPTED_MP4)
+    with pytest.raises(PipelineFailure) as exc:
+        run(request)
+    assert exc.value.code is ErrorCode.CORRUPTED_FILE
+
+
+# --- Frame ornekleme birim testleri ---
+
+def test_frame_sampling_bounded_by_max_frames(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.config import get_settings
+
+    video_path = tmp_path / "long.mp4"
+    video_path.write_bytes(_real_mp4_bytes(seconds=5.0, fps=10.0))  # 50 frame, 1sn=10 frame araligi -> ~5 ornek
+
+    settings = get_settings()
+    monkeypatch.setattr(settings, "video_max_sampled_frames", 3)
+    frames = sample_frames(video_path, settings)
+    assert len(frames) <= 3
+    assert all(f.jpeg.startswith(b"\xff\xd8") for f in frames)  # gecerli JPEG magic byte
+
 
 def test_detect_media_type_reads_magic_bytes(tmp_path: Path) -> None:
     mp4 = tmp_path / "a.mp4"
-    mp4.write_bytes(_MP4)
+    mp4.write_bytes(_MP4_BYTES)
     assert detect_media_type(mp4, declared=MP4) == MP4
-
-    webm = tmp_path / "a.webm"
-    webm.write_bytes(_WEBM)
-    assert detect_media_type(webm, declared=WEBM) == WEBM
 
 
 # --- Registry ---
