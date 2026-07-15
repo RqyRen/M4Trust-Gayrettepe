@@ -22,6 +22,41 @@ _SCHEMA_IDS: dict[tuple[str, str | None], str] = {
 }
 
 
+# Giden result event'leri (ADR-002 §5.3) — FastAPI kendi ciktisini dogrular (ADR-003 §18.1).
+_COMPLETED = "ai.job.completed.v1"
+_FAILED = "ai.job.failed.v1"
+
+_RESULT_SCHEMA_IDS: dict[tuple[str, str], str] = {
+    (_COMPLETED, "DOCUMENT_EXTRACTION"): "https://schemas.m4trust.internal/ai/document-extraction/completed-event/1.0.0",
+    (_COMPLETED, "VIDEO_ANALYSIS"): "https://schemas.m4trust.internal/ai/video-analysis/completed-event/1.0.0",
+    (_FAILED, "DOCUMENT_EXTRACTION"): "https://schemas.m4trust.internal/ai/document-extraction/failed-event/1.0.0",
+    (_FAILED, "VIDEO_ANALYSIS"): "https://schemas.m4trust.internal/ai/video-analysis/failed-event/1.0.0",
+}
+
+
+def validate_outgoing(event: dict) -> None:
+    """Yayinlanmadan once uretilen result event'ini canonical schema ile dogrular.
+
+    ADR-002 §11: completed event yalniz canonical ve schema-valid sonuc icin
+    yayinlanir. Schema-invalid bir event broker'a HIC cikmamalidir.
+    """
+    key = (event.get("eventType"), event.get("jobType"))
+    schema_id = _RESULT_SCHEMA_IDS.get(key)
+    if schema_id is None:
+        raise ContractViolation(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            f"unknown outgoing event: eventType={key[0]!r} jobType={key[1]!r}",
+        )
+
+    errors = sorted(validator_for_id(schema_id).iter_errors(event), key=lambda e: list(e.path))
+    if errors:
+        detail = "; ".join(f"{'.'.join(str(p) for p in e.path) or '<root>'}: {e.validator}" for e in errors[:5])
+        raise ContractViolation(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            f"outgoing event failed schema validation: {detail}",
+        )
+
+
 def _select_schema_id(event_type: str, job_type: str | None) -> str:
     if event_type == _CANCEL_REQUESTED:
         return _SCHEMA_IDS[(_CANCEL_REQUESTED, None)]

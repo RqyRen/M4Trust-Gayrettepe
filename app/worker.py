@@ -24,7 +24,7 @@ from app.contracts.validation import validate_command
 from app.messaging.consumer import start_consuming
 from app.messaging.publisher import publish_result
 from app.pipeline.failure import build_failed_event
-from app.pipeline.fake import build_completed_event
+from app.pipeline.registry import pipeline_for
 
 logger = logging.getLogger("ai-worker")
 
@@ -91,8 +91,9 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         return
 
     started = time.monotonic()
+    pipeline = pipeline_for(envelope.jobType)
     try:
-        event, attempts = run_with_retry(lambda attempt: build_completed_event(request), DEFAULT_POLICY)
+        event, attempts = run_with_retry(lambda attempt: pipeline(request), DEFAULT_POLICY)
     except PipelineFailure as failure:
         duration_ms = int((time.monotonic() - started) * 1000)
         failed_event = build_failed_event(
