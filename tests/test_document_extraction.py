@@ -22,6 +22,7 @@ from fpdf import FPDF
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfWriter
 
+from app.config import Settings
 from app.contracts.errors import ContractViolation, ErrorCode, PipelineFailure
 from app.contracts.validation import validate_outgoing
 from app.pipeline.document_extraction import llm as llm_module
@@ -208,6 +209,41 @@ _CANNED_LLM_OUTPUT = {
 
 def _mock_llm(monkeypatch: pytest.MonkeyPatch, output: dict = _CANNED_LLM_OUTPUT) -> None:
     monkeypatch.setattr(llm_module, "extract_structured_data", lambda text, settings: output)
+
+
+# --- LLM cagri parametreleri (gercek API'ye gitmeden, OpenAI client mock) ---
+
+def test_llm_call_uses_temperature_zero_for_output_consistency(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bulgu (15 Temmuz 2026): temperature ayarlanmamisti; ayni sozlesme
+    calistirma-calistirmaya farkli warning sayisi uretebiliyordu. Bu test
+    gercek OpenAI cagrisi yapmadan, `temperature=0`'in fiilen API'ye
+    gonderilen kwarg'larda oldugunu dogrular.
+    """
+    captured_kwargs: dict = {}
+
+    class _FakeMessage:
+        content = json.dumps(_CANNED_LLM_OUTPUT)
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return type("_FakeResponse", (), {"choices": [type("_FakeChoice", (), {"message": _FakeMessage()})()]})()
+
+    class _FakeChat:
+        completions = _FakeCompletions()
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        chat = _FakeChat()
+
+    monkeypatch.setattr(llm_module, "OpenAI", _FakeClient)
+    settings = Settings(openai_api_key="test-key", openai_model="gpt-5.4")
+
+    llm_module.extract_structured_data("sample contract text", settings)
+
+    assert captured_kwargs["temperature"] == 0
 
 
 # --- Pipeline uctan uca (gercek indirme + hash + tur + GERCEK metin cikarimi, LLM mock) ---

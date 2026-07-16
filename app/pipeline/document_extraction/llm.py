@@ -127,6 +127,7 @@ def extract_structured_data(text: str, settings: Settings) -> dict:
     try:
         response = client.chat.completions.create(
             model=settings.openai_model,
+            temperature=0,  # calistirma-calistirmaya tutarlilik (ayni sozlesme -> ayni cikti)
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": truncated},
