@@ -95,6 +95,26 @@ Testler:
 .venv\Scripts\python.exe -m pytest tests/ -q
 ```
 
+## Production image
+
+Tek `Dockerfile`, iki rol. Varsayilan komut `ai-api`'yi calistirir (`uvicorn app.main:app`,
+Railway'in verdigi `$PORT`'u dinler). `ai-worker` deploy'unda Railway'de
+**Custom Start Command** `python -m app.worker` olarak ayarlanir — ayni image,
+ayni bagimlilik kilidi, tek surum kaymasi riski yok.
+
+Image `tesseract-ocr` (tur+eng dil paketleri) icerir, non-root kullanici (`appuser`)
+olarak calisir, ve `/health/live` uzerinden Docker `HEALTHCHECK` yapar.
+
+```powershell
+docker build -t m4trust-ai-service .
+
+# ai-api
+docker run -p 8000:8000 --env-file .env m4trust-ai-service
+
+# ai-worker (ayni image, farkli komut)
+docker run --env-file .env m4trust-ai-service python -m app.worker
+```
+
 ## Contracts senkronu
 
 `contracts/` klasörü Spring reposundaki ortak sözleşmenin kopyasıdır. Değiştiğinde her iki repoda güncellenir.
