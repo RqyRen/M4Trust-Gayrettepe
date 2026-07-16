@@ -17,7 +17,7 @@ import json
 import logging
 import time
 
-from app.common.idempotency import JobStore, Resolution, identity_of
+from app.common.idempotency import Resolution, build_job_store, identity_of
 from app.common.retry import DEFAULT_POLICY, run_with_retry
 from app.contracts.errors import ContractViolation, PipelineFailure
 from app.contracts.validation import validate_command
@@ -28,7 +28,7 @@ from app.pipeline.registry import pipeline_for
 
 logger = logging.getLogger("ai-worker")
 
-_store = JobStore()
+_store = build_job_store()
 
 
 def _publish_and_record(channel, request: dict, identity, event: dict, *, completed: bool) -> None:

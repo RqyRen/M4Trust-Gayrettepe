@@ -8,6 +8,10 @@ uvicorn[standard]
 # Messaging (RabbitMQ - ADR-002)
 pika
 
+# Idempotency job store: paylasimli/kalici storage (coklu worker replica'sinda
+# process-local bellek yeterli degil - bkz. app/common/idempotency.py)
+redis
+
 # Kaynak indirme: kisa omurlu presigned URL (ADR-001 §6)
 # NOT: object storage'a genel SDK erisimi YOK; sadece HTTP GET.
 httpx

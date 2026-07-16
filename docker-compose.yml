@@ -36,6 +36,20 @@ services:
       timeout: 10s
       retries: 5
 
+  redis:
+    image: redis:7-alpine
+    container_name: m4trust-redis
+    ports:
+      - "6379:6379"     # idempotency job store (shared across worker replicas)
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
 volumes:
   rabbitmq-data:
   minio-data:
+  redis-data:

@@ -34,6 +34,18 @@ class Settings(BaseSettings):
     rabbitmq_vhost: str = "/"
     worker_prefetch: int = 8
 
+    # Idempotency job store (ADR-002 §17.1) — Redis: coklu worker replica'si
+    # arasinda paylasilan, kalici job durumu. In-memory tek worker'da yeterliydi
+    # ama replica sayisi 1'i gectiginde her worker kendi hafizasinda ayri
+    # kayit tutuyordu ve duplicate/terminal tespiti kirilyordu.
+    redis_host: str = "localhost"
+    redis_port: int = 6379
+    redis_db: int = 0
+    redis_password: str = ""
+    # Terminal (completed/failed) kayitlarin ne kadar sure tutulacagi; bu sure
+    # icinde gelen duplicate teslimatlar onceki sonucu yeniden yayinlar.
+    idempotency_ttl_seconds: int = 259_200  # 72 saat
+
     # Kaynak indirme (ADR-001 §6, ADR-002 §7.1)
     download_timeout_seconds: float = 30.0
     download_max_bytes: int = 256 * 1024 * 1024  # 256 MiB
