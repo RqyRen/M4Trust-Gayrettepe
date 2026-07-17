@@ -9,10 +9,17 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
+from app.common.logging_setup import configure_logging
 from app.config import get_settings
 from app.operational import build_capabilities, build_contracts
 
 settings = get_settings()
+configure_logging(
+    service=settings.service_name,
+    environment=settings.app_env,
+    version=settings.service_version,
+    level=settings.log_level,
+)
 
 app = FastAPI(
     title="M4Trust AI Service (ai-api)",
