@@ -47,8 +47,8 @@ def build_capabilities(settings: Settings) -> dict:
     }
 
 
-def build_contracts() -> dict:
-    """ADR-002 §21.4 formatinda contract checksum metadata'si."""
+def build_contracts() -> list[dict]:
+    """ADR-002 §21.4 formatinda contract checksum metadata'si (duz array)."""
     contracts = []
     for name, path in _CONTRACT_FILES.items():
         entry = {"name": name, "version": "1.0.0"}
@@ -57,4 +57,4 @@ def build_contracts() -> dict:
         else:
             entry["sha256"] = None
         contracts.append(entry)
-    return {"contracts": contracts}
+    return contracts

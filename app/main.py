@@ -38,7 +38,7 @@ def health_ready() -> dict:
     ai-api icin operasyonel endpoint'lerin calisabilirligi yeterlidir.
     Ileride gerekli dis bagimlilik kontrolleri buraya component olarak eklenir.
     """
-    return {"status": "READY"}
+    return {"status": "UP"}
 
 
 @app.get("/internal/v1/capabilities", tags=["internal"])
@@ -48,6 +48,6 @@ def capabilities() -> dict:
 
 
 @app.get("/internal/v1/contracts", tags=["internal"])
-def contracts() -> dict:
+def contracts() -> list[dict]:
     """Contract metadata ve checksum bilgisi (ADR-002 §21.4)."""
     return build_contracts()

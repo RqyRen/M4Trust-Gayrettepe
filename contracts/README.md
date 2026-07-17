@@ -1,19 +1,21 @@
-# M4Trust shared AI contracts
+# M4Trust contracts
 
-This directory is the initial shared Spring–AI contract foundation for ADR-001 and ADR-002. It defines versioned JSON Schemas, canonical examples, the asynchronous topology, and operational internal API metadata. Spring is the business authority. FastAPI workers consume the request contracts and return canonical M4Trust results; they do not return model-native or provider-specific payloads.
+This directory contains the reviewed public Spring–frontend design contract and the shared Spring–AI contract foundation. The public contract is designed slice by slice before implementation or frontend generation. The AI contracts define versioned JSON Schemas, canonical examples, the asynchronous topology, and operational internal API metadata. Spring remains the business authority. FastAPI workers consume request contracts and return canonical M4Trust results; they do not return model-native or provider-specific payloads.
+
+The envelope field `transactionId` identifies the owning `Deal` aggregate (ADR-003). The v1 name is retained for wire compatibility; renaming it to `dealId` is a v2 candidate, and Spring maps it at the integration boundary. Canonical `producer.service` values follow the ADR-007 service names (`m4trust-core-api`, `m4trust-ai-worker`).
 
 Raw document and video bytes are never carried in RabbitMQ messages. Requests contain a short-lived download reference with a URL and RFC 3339 UTC expiry. Delivery is at-least-once, so `jobId`, `eventId`, `correlationId`, `causationId`, and `idempotencyKey` are explicit and consumers must be idempotent.
 
 ## Ownership and review
 
-The M4Trust core/platform team owns the shared envelope, topology, and cross-job contracts. The owning job team proposes job-specific changes. Changes require review from the core/platform owner and the affected Spring and FastAPI owners. Contract changes are reviewed as API changes, including compatibility, fixture updates, and a successful validation run.
+The M4Trust core/platform team owns the public Core API design contract, shared envelope, topology, and cross-job contracts. Public API proposals require review from the Core API and affected frontend owners before implementation or client generation. The owning AI job team proposes job-specific changes, reviewed by the core/platform owner and affected Spring and FastAPI owners. Contract changes are reviewed as API changes, including compatibility and a successful validation run; fixtures are updated when an executable example surface changes.
 
 ## Directory structure
 
 ```text
 contracts/
   asyncapi/       RabbitMQ topic-exchange topology and message references
-  openapi/        Internal operational endpoints only
+  openapi/        Public Core API design contract and AI-internal operational API
   schemas/        Draft 2020-12 shared and job-specific schemas
   examples/       Canonical fixtures used by validation and documentation
   scripts/        Lightweight local validation tooling
@@ -60,7 +62,7 @@ python -m pip install -r contracts/requirements.txt
 python contracts/scripts/validate_contracts.py
 ```
 
-The validator checks every JSON Schema with Draft 2020-12 schema checks, resolves local canonical `$ref` references, checks unique IDs and exact event versions, validates every canonical JSON fixture, validates the AsyncAPI/OpenAPI YAML references, and runs expected-invalid checks for schema versions, non-UTC timestamps, error combinations, strict structured values, plus an expected-valid future optional field. It prints JSON paths for failures and exits non-zero on failure.
+The validator checks every JSON Schema with Draft 2020-12 schema checks, resolves local canonical `$ref` references, checks unique IDs and exact event versions, validates every canonical JSON fixture, validates the AsyncAPI/OpenAPI YAML references and path invariants, requires the public error components, and runs expected-invalid checks for schema versions, non-UTC timestamps, error combinations, strict structured values, plus an expected-valid future optional field. It prints JSON paths for failures and exits non-zero on failure.
 
 The same command runs in [GitHub Actions](../.github/workflows/contracts-validation.yml) for pushes to `main` and pull requests targeting `main` when contract or workflow files change.
 
@@ -85,6 +87,8 @@ JSON Schema validates shape and local constraints. Runtime semantic validation i
 - URL expiry and authorization; and
 - cross-field business consistency, including the fact that advisory AI output cannot authorize a business decision.
 
-## Operational documents
+## OpenAPI documents
 
-`asyncapi/m4trust-ai-v1.yaml` documents the topic exchanges `m4trust.ai.commands`, `m4trust.ai.events`, and `m4trust.ai.dead-letter`; the agreed queues and routing keys are recorded in both AsyncAPI bindings and the `x-m4trust-topology` summary. `openapi/ai-internal-v1.yaml` exposes only liveness, readiness, capabilities, and contract metadata. It intentionally has no synchronous inference endpoint.
+`openapi/core-api-v1.yaml` is the reviewed OpenAPI 3.1 design contract for the same-origin public Spring API consumed by the frontend. It contains the reusable Problem Details foundation, the Slice 1 authentication operations, the Slice 2 legal entity and membership surface, and the Slice 3 Deal create/list/detail/update/cancel surface designed before implementation. Slice 3 preserves centralized context resolution: a syntactically valid hidden legal entity produces `LEGAL_ENTITY_NOT_FOUND`, while a missing Deal or participant-hidden Deal produces `DEAL_NOT_FOUND`. It also uses explicit `expectedVersion` conflicts and exposes backend-derived lifecycle and action availability instead of asking the frontend to infer them. Management endpoints are not part of this public contract.
+
+`openapi/ai-internal-v1.yaml` is separate and exposes only AI-service liveness, readiness, capabilities, and contract metadata. It intentionally has no synchronous inference endpoint. `asyncapi/m4trust-ai-v1.yaml` documents the topic exchanges `m4trust.ai.commands`, `m4trust.ai.events`, and `m4trust.ai.dead-letter`; the agreed queues and routing keys are recorded in both AsyncAPI bindings and the `x-m4trust-topology` summary.

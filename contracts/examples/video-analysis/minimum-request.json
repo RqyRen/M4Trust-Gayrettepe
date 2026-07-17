@@ -11,7 +11,7 @@
   "transactionId": "16161616-1616-4161-8161-161616161616",
   "subjectId": "17171717-1717-4171-8171-171717171717",
   "idempotencyKey": "video-minimum-2026-07-13",
-  "producer": {"service": "m4trust-core", "version": "1.0.0"},
+  "producer": {"service": "m4trust-core-api", "version": "1.0.0"},
   "payload": {
     "input": {
       "videoId": "17171717-1717-4171-8171-171717171717",

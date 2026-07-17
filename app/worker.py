@@ -20,7 +20,7 @@ import time
 from app.common.idempotency import Resolution, build_job_store, identity_of
 from app.common.retry import DEFAULT_POLICY, run_with_retry
 from app.contracts.errors import ContractViolation, PipelineFailure
-from app.contracts.validation import validate_command
+from app.contracts.validation import validate_command, validate_outgoing
 from app.messaging.consumer import start_consuming
 from app.messaging.publisher import publish_result
 from app.pipeline.failure import build_failed_event
@@ -99,6 +99,16 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         failed_event = build_failed_event(
             request, failure, max_attempts=DEFAULT_POLICY.max_attempts, duration_ms=duration_ms
         )
+        try:
+            # Completed event'ler pipeline icinde dogrulanir; failed event'ler
+            # burada uretildigi icin ayni garanti burada saglanmali (bulgu,
+            # 16 Temmuz 2026: bu kontrol daha once hic yoktu).
+            validate_outgoing(failed_event)
+        except ContractViolation:
+            _store.forget(identity)
+            logger.exception("failed event failed schema validation jobId=%s -> dead-letter", identity.job_id)
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
         logger.warning(
             "job failed jobId=%s code=%s attempt=%s/%s",
             identity.job_id,
