@@ -19,12 +19,14 @@ import time
 
 from app.common.idempotency import Resolution, build_job_store, identity_of
 from app.common.retry import DEFAULT_POLICY, run_with_retry
+from app.config import get_settings
 from app.contracts.errors import ContractViolation, PipelineFailure
 from app.contracts.validation import validate_command, validate_outgoing
 from app.messaging.consumer import start_consuming
 from app.messaging.publisher import publish_result
 from app.pipeline.failure import build_failed_event
 from app.pipeline.registry import pipeline_for
+from app.worker_health import WorkerState, start_health_server
 
 logger = logging.getLogger("ai-worker")
 
@@ -133,8 +135,11 @@ def handle_command(channel, method, properties, body: bytes) -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    settings = get_settings()
+    state = WorkerState()
+    start_health_server(state, port=settings.worker_health_port)
     logger.info("ai-worker starting; consuming command queues")
-    start_consuming(handle_command)
+    start_consuming(handle_command, state=state)
 
 
 if __name__ == "__main__":
