@@ -26,14 +26,21 @@ def build_connection() -> pika.BlockingConnection:
     return pika.BlockingConnection(params)
 
 
-def start_consuming(on_command) -> None:
+def start_consuming(on_command, *, state=None) -> None:
     """Command queue'larini tuketmeye baslar (bloklar).
 
     on_command(channel, method, properties, body) callback'i her mesaj icin
     cagirilir; ack/nack sorumlulugu callback'e aittir.
+
+    `state` verilirse (bkz. app.worker_health.WorkerState), gercekten
+    consume etmeye baslarken/biterken isaretlenir -- worker'in /health/ready
+    endpoint'i bunu okur (ADR-007 §9.2, §31).
     """
     connection = build_connection()
     channel = connection.channel()
+    # Publisher confirm: broker onaylamadan basic_publish "basarili" sayilmaz
+    # (bulgu, 16 Temmuz 2026 - ADR-002 SS5.3 "persistent, guvenilir yayinlama").
+    channel.confirm_delivery()
     declare_topology(channel)
     channel.basic_qos(prefetch_count=get_settings().worker_prefetch)
 
@@ -41,8 +48,12 @@ def start_consuming(on_command) -> None:
         channel.basic_consume(queue=binding.queue, on_message_callback=on_command)
 
     try:
+        if state is not None:
+            state.mark_consuming(True)
         channel.start_consuming()
     except KeyboardInterrupt:
         channel.stop_consuming()
     finally:
+        if state is not None:
+            state.mark_consuming(False)
         connection.close()

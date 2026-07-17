@@ -24,9 +24,10 @@ from app.config import get_settings
 from app.contracts.errors import ContractViolation, PipelineFailure
 from app.contracts.validation import validate_command, validate_outgoing
 from app.messaging.consumer import start_consuming
-from app.messaging.publisher import publish_result
+from app.messaging.publisher import PublishConfirmationFailed, publish_result
 from app.pipeline.failure import build_failed_event
 from app.pipeline.registry import pipeline_for
+from app.worker_health import WorkerState, start_health_server
 
 logger = logging.getLogger("ai-worker")
 
@@ -94,7 +95,13 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         # Tamamlanan isi tekrar calistirma; onceki terminal sonucu yeniden yayinla.
         event = resolved.terminal_event
         completed = event["eventType"] == "ai.job.completed.v1"
-        publish_result(channel, event, completed=completed)
+        try:
+            publish_result(channel, event, completed=completed)
+        except PublishConfirmationFailed:
+            # Kayit zaten terminal; forget YOK -- sadece bu redelivery'i dead-letter'a birak.
+            logger.exception("broker did not confirm terminal republish -> dead-letter", extra=log_context)
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
         logger.info("duplicate after terminal -> republished", extra=log_context)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
@@ -125,7 +132,13 @@ def handle_command(channel, method, properties, body: bytes) -> None:
             DEFAULT_POLICY.max_attempts,
             extra={**log_context, "attemptNumber": failure.attempt_number},
         )
-        _publish_and_record(channel, request, identity, failed_event, completed=False)
+        try:
+            _publish_and_record(channel, request, identity, failed_event, completed=False)
+        except PublishConfirmationFailed:
+            _store.forget(identity)
+            logger.exception("broker did not confirm failed event -> dead-letter", extra=log_context)
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
     except Exception:
@@ -136,7 +149,13 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         return
 
     logger.info("job succeeded attempts=%s", attempts, extra={**log_context, "attemptNumber": attempts})
-    _publish_and_record(channel, request, identity, event, completed=True)
+    try:
+        _publish_and_record(channel, request, identity, event, completed=True)
+    except PublishConfirmationFailed:
+        _store.forget(identity)
+        logger.exception("broker did not confirm completed event -> dead-letter", extra=log_context)
+        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        return
     channel.basic_ack(delivery_tag=method.delivery_tag)
 
 
@@ -148,8 +167,10 @@ def main() -> None:
         version=settings.service_version,
         level=settings.log_level,
     )
+    state = WorkerState()
+    start_health_server(state, port=settings.worker_health_port)
     logger.info("ai-worker starting; consuming command queues")
-    start_consuming(handle_command)
+    start_consuming(handle_command, state=state)
 
 
 if __name__ == "__main__":
