@@ -18,6 +18,7 @@ class Settings(BaseSettings):
     app_env: str = "local"
     log_level: str = "INFO"
     ai_api_port: int = 8000
+    worker_health_port: int = 8001
 
     # Servis kimligi (capabilities/contracts endpoint'lerinde kullanilir)
     # Kanonik ad ADR-007 SS9 / contracts CHANGELOG'da m4trust-ai-service olarak sabit.
