@@ -11,7 +11,7 @@
   "transactionId": "20202020-2020-4020-8020-202020202020",
   "subjectId": "21212121-2121-4121-8121-212121212121",
   "idempotencyKey": "video-full-2026-07-13",
-  "producer": {"service": "m4trust-core", "version": "1.0.0"},
+  "producer": {"service": "m4trust-core-api", "version": "1.0.0"},
   "payload": {
     "input": {
       "videoId": "21212121-2121-4121-8121-212121212121",

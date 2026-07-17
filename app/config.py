@@ -20,7 +20,8 @@ class Settings(BaseSettings):
     ai_api_port: int = 8000
 
     # Servis kimligi (capabilities/contracts endpoint'lerinde kullanilir)
-    service_name: str = "ai-service"
+    # Kanonik ad ADR-007 SS9 / contracts CHANGELOG'da m4trust-ai-service olarak sabit.
+    service_name: str = "m4trust-ai-service"
     service_version: str = "0.1.0"
 
     # Desteklenen contract major/schema version'lari (ADR-002 §15, §21.3)
