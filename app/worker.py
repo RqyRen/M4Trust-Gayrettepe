@@ -33,7 +33,16 @@ _store = build_job_store()
 
 def _publish_and_record(channel, request: dict, identity, event: dict, *, completed: bool) -> None:
     routing_key = publish_result(channel, event, completed=completed)
-    _store.mark_terminal(identity, event)
+    recorded = _store.mark_terminal(identity, event)
+    if not recorded:
+        # Lease baska bir worker'a reclaim edilmis (bu worker cok yavas kalmis
+        # olabilir); Spring'e yine de yayinlandi, ama bu artik zombie bir
+        # yazma -- kayit baskasinin sonucuna dokunulmadan atlandi (bulgu,
+        # 16 Temmuz 2026).
+        logger.warning(
+            "terminal record rejected (lease reclaimed by another worker) jobId=%s",
+            request["jobId"],
+        )
     logger.info(
         "job terminal jobId=%s jobType=%s completed=%s -> %s",
         request["jobId"],

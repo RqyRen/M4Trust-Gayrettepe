@@ -46,6 +46,13 @@ class Settings(BaseSettings):
     # Terminal (completed/failed) kayitlarin ne kadar sure tutulacagi; bu sure
     # icinde gelen duplicate teslimatlar onceki sonucu yeniden yayinlar.
     idempotency_ttl_seconds: int = 259_200  # 72 saat
+    # Bir worker'in bir job'i "PROCESSING" olarak kilitli tutabilecegi azami
+    # sure. Worker bu sure dolmadan bitiremeden coker/kaybolursa, baska bir
+    # worker lease suresi dolduktan sonra job'i devralabilir (bulgu,
+    # 16 Temmuz 2026: eskiden bu sinir yoktu, coken worker'in job'i sonsuza
+    # kadar kilitli kalabiliyordu). Gozlemlenen en uzun pipeline calismasindan
+    # (OCR+LLM veya video) cok daha genis tutulur.
+    idempotency_lease_seconds: int = 600  # 10 dakika
 
     # Kaynak indirme (ADR-001 §6, ADR-002 §7.1)
     download_timeout_seconds: float = 30.0

@@ -7,6 +7,7 @@ Redis erisilemezse test modulu atlanir.
 from __future__ import annotations
 
 import threading
+import time
 import uuid
 
 import pytest
@@ -32,7 +33,16 @@ pytestmark = pytest.mark.skipif(not _redis_available(), reason="local Redis (doc
 @pytest.fixture
 def store() -> RedisJobStore:
     client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
-    yield RedisJobStore(client, ttl_seconds=30)
+    yield RedisJobStore(client, ttl_seconds=30, lease_seconds=30)
+    for key in client.scan_iter("m4trust:idempotency:*"):
+        client.delete(key)
+
+
+@pytest.fixture
+def short_lease_store() -> RedisJobStore:
+    """lease_seconds cok kisa -- crash/reclaim senaryosunu gercek zamanla test eder."""
+    client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
+    yield RedisJobStore(client, ttl_seconds=30, lease_seconds=1)
     for key in client.scan_iter("m4trust:idempotency:*"):
         client.delete(key)
 
@@ -105,3 +115,54 @@ def test_concurrent_resolve_across_shared_store_yields_exactly_one_new(store: Re
 
     assert resolutions.count(Resolution.NEW) == 1
     assert resolutions.count(Resolution.IN_PROGRESS) == 15
+
+
+# --- Lease-based crash recovery (bulgu, 16 Temmuz 2026) ---
+
+def test_expired_lease_is_reclaimed_by_another_worker(short_lease_store: RedisJobStore) -> None:
+    """Worker crash simulasyonu: sahibi bir daha hic donmuyor, lease dolunca baskasi devralir."""
+    identity = _identity()
+    client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
+    crashed_worker = short_lease_store  # lease_seconds=1
+    new_worker = RedisJobStore(client, ttl_seconds=30, lease_seconds=30)
+
+    assert crashed_worker.resolve(identity).resolution is Resolution.NEW
+    # Coken worker hic donmuyor (mark_terminal/forget cagirmiyor).
+    time.sleep(1.2)  # lease suresi dolsun
+
+    result = new_worker.resolve(identity)
+    assert result.resolution is Resolution.NEW  # reclaim edildi, yeniden calistirilabilir
+
+
+def test_reclaimed_job_owner_cannot_overwrite_new_owners_result(short_lease_store: RedisJobStore) -> None:
+    """Eski (reclaim edilmis) sahip gec donup terminal yazmaya calisirsa reddedilir."""
+    identity = _identity()
+    client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
+    old_owner = short_lease_store  # lease_seconds=1
+    new_owner = RedisJobStore(client, ttl_seconds=30, lease_seconds=30)
+
+    assert old_owner.resolve(identity).resolution is Resolution.NEW
+    time.sleep(1.2)
+    assert new_owner.resolve(identity).resolution is Resolution.NEW  # reclaim
+
+    new_result = {"eventType": "ai.job.completed.v1", "jobId": identity.job_id, "source": "new_owner"}
+    assert new_owner.mark_terminal(identity, new_result) is True
+
+    # Eski sahip artik cok gec donuyor -- yazmasi SESSIZCE REDDEDILMELI, ezmemeli.
+    stale_result = {"eventType": "ai.job.completed.v1", "jobId": identity.job_id, "source": "zombie_old_owner"}
+    assert old_owner.mark_terminal(identity, stale_result) is False
+
+    final = new_owner.resolve(identity)
+    assert final.resolution is Resolution.TERMINAL
+    assert final.terminal_event == new_result  # zombie yazma hicbir sey degistirmedi
+
+
+def test_active_lease_is_not_reclaimed(store: RedisJobStore) -> None:
+    """Lease hala gecerliyse (worker aktif calisiyor) baskasi devralamaz."""
+    identity = _identity()
+    client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
+    active_worker = store  # lease_seconds=30, henuz dolmadi
+    other_worker = RedisJobStore(client, ttl_seconds=30, lease_seconds=30)
+
+    assert active_worker.resolve(identity).resolution is Resolution.NEW
+    assert other_worker.resolve(identity).resolution is Resolution.IN_PROGRESS  # reclaim YOK
