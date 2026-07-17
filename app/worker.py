@@ -22,7 +22,7 @@ from app.common.retry import DEFAULT_POLICY, run_with_retry
 from app.contracts.errors import ContractViolation, PipelineFailure
 from app.contracts.validation import validate_command, validate_outgoing
 from app.messaging.consumer import start_consuming
-from app.messaging.publisher import publish_result
+from app.messaging.publisher import PublishConfirmationFailed, publish_result
 from app.pipeline.failure import build_failed_event
 from app.pipeline.registry import pipeline_for
 
@@ -85,7 +85,13 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         # Tamamlanan isi tekrar calistirma; onceki terminal sonucu yeniden yayinla.
         event = resolved.terminal_event
         completed = event["eventType"] == "ai.job.completed.v1"
-        publish_result(channel, event, completed=completed)
+        try:
+            publish_result(channel, event, completed=completed)
+        except PublishConfirmationFailed:
+            # Kayit zaten terminal; forget YOK -- sadece bu redelivery'i dead-letter'a birak.
+            logger.exception("broker did not confirm terminal republish jobId=%s -> dead-letter", identity.job_id)
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
         logger.info("duplicate after terminal jobId=%s -> republished", identity.job_id)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
@@ -116,7 +122,13 @@ def handle_command(channel, method, properties, body: bytes) -> None:
             failure.attempt_number,
             DEFAULT_POLICY.max_attempts,
         )
-        _publish_and_record(channel, request, identity, failed_event, completed=False)
+        try:
+            _publish_and_record(channel, request, identity, failed_event, completed=False)
+        except PublishConfirmationFailed:
+            _store.forget(identity)
+            logger.exception("broker did not confirm failed event jobId=%s -> dead-letter", identity.job_id)
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
     except Exception:
@@ -127,7 +139,13 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         return
 
     logger.info("job succeeded jobId=%s attempts=%s", identity.job_id, attempts)
-    _publish_and_record(channel, request, identity, event, completed=True)
+    try:
+        _publish_and_record(channel, request, identity, event, completed=True)
+    except PublishConfirmationFailed:
+        _store.forget(identity)
+        logger.exception("broker did not confirm completed event jobId=%s -> dead-letter", identity.job_id)
+        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        return
     channel.basic_ack(delivery_tag=method.delivery_tag)
 
 

@@ -34,6 +34,9 @@ def start_consuming(on_command) -> None:
     """
     connection = build_connection()
     channel = connection.channel()
+    # Publisher confirm: broker onaylamadan basic_publish "basarili" sayilmaz
+    # (bulgu, 16 Temmuz 2026 - ADR-002 SS5.3 "persistent, guvenilir yayinlama").
+    channel.confirm_delivery()
     declare_topology(channel)
     channel.basic_qos(prefetch_count=get_settings().worker_prefetch)
 
