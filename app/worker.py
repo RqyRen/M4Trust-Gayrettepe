@@ -18,6 +18,7 @@ import logging
 import time
 
 from app.common.idempotency import Resolution, build_job_store, identity_of
+from app.common.logging_setup import configure_logging
 from app.common.retry import DEFAULT_POLICY, run_with_retry
 from app.config import get_settings
 from app.contracts.errors import ContractViolation, PipelineFailure
@@ -37,11 +38,9 @@ def _publish_and_record(channel, request: dict, identity, event: dict, *, comple
     routing_key = publish_result(channel, event, completed=completed)
     _store.mark_terminal(identity, event)
     logger.info(
-        "job terminal jobId=%s jobType=%s completed=%s -> %s",
-        request["jobId"],
-        request["jobType"],
-        completed,
+        "job terminal -> %s",
         routing_key,
+        extra={"jobId": request["jobId"], "jobType": request["jobType"], "correlationId": request["correlationId"]},
     )
 
 
@@ -56,30 +55,39 @@ def handle_command(channel, method, properties, body: bytes) -> None:
 
     # Cancel best-effort; ilk surumde ayri cancelled event zorunlu degil (§20).
     if raw.get("eventType") == "ai.job.cancel.requested.v1":
-        logger.info("cancel received jobId=%s (best-effort)", raw.get("jobId"))
+        logger.info("cancel received (best-effort)", extra={"jobId": raw.get("jobId")})
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
 
     try:
         envelope = validate_command(raw)
     except ContractViolation as exc:
-        logger.warning("contract violation code=%s jobId=%s", exc.code.value, raw.get("jobId"))
+        logger.warning(
+            "contract violation code=%s -> dead-letter",
+            exc.code.value,
+            extra={"jobId": raw.get("jobId")},
+        )
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
     request = envelope.model_dump()
     identity = identity_of(request)
     resolved = _store.resolve(identity)
+    log_context = {
+        "jobId": identity.job_id,
+        "jobType": identity.job_type,
+        "correlationId": request["correlationId"],
+    }
 
     if resolved.resolution is Resolution.CONFLICT:
         # Ayni jobId + farkli input hash: contract violation (§17.1).
-        logger.warning("job identity conflict jobId=%s -> dead-letter", identity.job_id)
+        logger.warning("job identity conflict -> dead-letter", extra=log_context)
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
     if resolved.resolution is Resolution.IN_PROGRESS:
         # Devam eden isi yeniden baslatma; duplicate teslimati sessizce ack'le.
-        logger.info("duplicate while in progress jobId=%s -> skipped", identity.job_id)
+        logger.info("duplicate while in progress -> skipped", extra=log_context)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
 
@@ -91,10 +99,10 @@ def handle_command(channel, method, properties, body: bytes) -> None:
             publish_result(channel, event, completed=completed)
         except PublishConfirmationFailed:
             # Kayit zaten terminal; forget YOK -- sadece bu redelivery'i dead-letter'a birak.
-            logger.exception("broker did not confirm terminal republish jobId=%s -> dead-letter", identity.job_id)
+            logger.exception("broker did not confirm terminal republish -> dead-letter", extra=log_context)
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
-        logger.info("duplicate after terminal jobId=%s -> republished", identity.job_id)
+        logger.info("duplicate after terminal -> republished", extra=log_context)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
 
@@ -114,21 +122,21 @@ def handle_command(channel, method, properties, body: bytes) -> None:
             validate_outgoing(failed_event)
         except ContractViolation:
             _store.forget(identity)
-            logger.exception("failed event failed schema validation jobId=%s -> dead-letter", identity.job_id)
+            logger.exception("failed event failed schema validation -> dead-letter", extra=log_context)
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
         logger.warning(
-            "job failed jobId=%s code=%s attempt=%s/%s",
-            identity.job_id,
+            "job failed code=%s attempt=%s/%s",
             failure.code.value,
             failure.attempt_number,
             DEFAULT_POLICY.max_attempts,
+            extra={**log_context, "attemptNumber": failure.attempt_number},
         )
         try:
             _publish_and_record(channel, request, identity, failed_event, completed=False)
         except PublishConfirmationFailed:
             _store.forget(identity)
-            logger.exception("broker did not confirm failed event jobId=%s -> dead-letter", identity.job_id)
+            logger.exception("broker did not confirm failed event -> dead-letter", extra=log_context)
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
         channel.basic_ack(delivery_tag=method.delivery_tag)
@@ -136,24 +144,29 @@ def handle_command(channel, method, properties, body: bytes) -> None:
     except Exception:
         # Beklenmeyen hata: kaydi geri al ki mesaj yeniden islenebilsin.
         _store.forget(identity)
-        logger.exception("unexpected worker error jobId=%s -> dead-letter", identity.job_id)
+        logger.exception("unexpected worker error -> dead-letter", extra=log_context)
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
-    logger.info("job succeeded jobId=%s attempts=%s", identity.job_id, attempts)
+    logger.info("job succeeded attempts=%s", attempts, extra={**log_context, "attemptNumber": attempts})
     try:
         _publish_and_record(channel, request, identity, event, completed=True)
     except PublishConfirmationFailed:
         _store.forget(identity)
-        logger.exception("broker did not confirm completed event jobId=%s -> dead-letter", identity.job_id)
+        logger.exception("broker did not confirm completed event -> dead-letter", extra=log_context)
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
     channel.basic_ack(delivery_tag=method.delivery_tag)
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = get_settings()
+    configure_logging(
+        service=settings.service_name,
+        environment=settings.app_env,
+        version=settings.service_version,
+        level=settings.log_level,
+    )
     state = WorkerState()
     start_health_server(state, port=settings.worker_health_port)
     logger.info("ai-worker starting; consuming command queues")
