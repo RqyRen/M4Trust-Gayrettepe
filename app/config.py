@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -65,6 +66,12 @@ class Settings(BaseSettings):
     download_timeout_seconds: float = 30.0
     download_max_bytes: int = 256 * 1024 * 1024  # 256 MiB
     download_chunk_bytes: int = 1024 * 1024
+    # SSRF korumasi (bulgu, 18 Temmuz 2026 - Berke review #4): `download.url`
+    # sorgusuz sualsiz indiriliyordu. Virgulle ayrilmis hostname allowlist;
+    # bos birakilirsa production disinda kontrol atlanir (yerel Docker MinIO /
+    # test sunuculari private/loopback IP'de calisir), production'da ise
+    # Settings kurulurken fail-fast olur (asagida). Detay: app/storage/ssrf_guard.py.
+    object_storage_allowed_hosts: str = ""
 
     # LLM tabanli document extraction (ADR-004 SS16 - Yusuf'un serbest model secimi)
     # Secret; .env disinda hicbir yerde literal olarak yazilmaz (ADR-007 SS19).
@@ -84,6 +91,18 @@ class Settings(BaseSettings):
     # Video frame ornekleme (maliyet/sure sinirlamasi)
     video_frame_sample_interval_seconds: float = 1.0
     video_max_sampled_frames: int = 30
+
+    @model_validator(mode="after")
+    def _require_object_storage_allowlist_in_production(self) -> "Settings":
+        # Berke review #4: production'da allowlist eksikse servis fail-fast
+        # olmali -- sessizce "her seye izin ver" veya "her seyi reddet"
+        # DEGIL, baslangicta acikca coksun.
+        if self.app_env.strip().lower() == "production" and not self.object_storage_allowed_hosts.strip():
+            raise ValueError(
+                "OBJECT_STORAGE_ALLOWED_HOSTS must be set in production "
+                "(SSRF protection requires an explicit download-host allowlist)"
+            )
+        return self
 
 
 @lru_cache

@@ -24,6 +24,10 @@ import httpx
 
 from app.config import get_settings
 from app.contracts.errors import ErrorCode, PipelineFailure
+from app.storage.ssrf_guard import validate_download_url
+
+_MAX_REDIRECTS = 5
+_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 
 
 def _parse_utc(value: str) -> datetime:
@@ -60,53 +64,81 @@ def _ensure_not_expired(expires_at: str, *, now: datetime | None = None) -> None
 
 
 def _download_to(path: Path, url: str, *, max_bytes: int) -> tuple[str, int]:
-    """Streaming indirme; (sha256_hex, boyut) dondurur. URL loglanmaz."""
+    """Streaming indirme; (sha256_hex, boyut) dondurur. URL loglanmaz.
+
+    Redirect'ler MANUEL takip edilir (bulgu, 18 Temmuz 2026 - Berke review
+    #4): httpx'in kendi `follow_redirects=True`'su her hedefi sorgusuz kabul
+    ediyordu. Her hop (ilk URL dahil) `validate_download_url` ile ayni
+    kontrolden gecer -- "allowlist'teki bir host'a git, oradan internal bir
+    IP'ye yonlendirilirsen sessizce takip et" acigini kapatir.
+    """
     settings = get_settings()
     digest = hashlib.sha256()
     total = 0
+    current_url = url
 
-    try:
-        with httpx.stream("GET", url, timeout=settings.download_timeout_seconds, follow_redirects=True) as response:
-            if response.status_code >= 500:
-                raise PipelineFailure(
-                    ErrorCode.OBJECT_STORAGE_TEMPORARILY_UNAVAILABLE,
-                    "object storage returned a server error",
-                    details={"dependency": "object-storage", "reason": "server error"},
-                )
-            if response.status_code >= 400:
-                # 403/404: referans gecersiz veya yetki yok -> retry cozmez.
-                raise PipelineFailure(
-                    ErrorCode.INVALID_DOWNLOAD_REFERENCE,
-                    "download reference was rejected by object storage",
-                    details={"field": "download.url", "reason": "rejected"},
-                )
-
-            with path.open("wb") as handle:
-                for chunk in response.iter_bytes(settings.download_chunk_bytes):
-                    total += len(chunk)
-                    if total > max_bytes:
+    for _ in range(_MAX_REDIRECTS + 1):
+        validate_download_url(current_url, settings)
+        try:
+            with httpx.stream(
+                "GET", current_url, timeout=settings.download_timeout_seconds, follow_redirects=False
+            ) as response:
+                if response.status_code in _REDIRECT_STATUS_CODES:
+                    location = response.headers.get("location")
+                    if not location:
                         raise PipelineFailure(
-                            ErrorCode.FILE_TOO_LARGE,
-                            "source exceeds the configured maximum size",
-                            details={"reason": "max size exceeded", "limit": max_bytes},
+                            ErrorCode.INVALID_DOWNLOAD_REFERENCE,
+                            "object storage returned a redirect without a location",
+                            details={"field": "download.url", "reason": "missing redirect location"},
                         )
-                    digest.update(chunk)
-                    handle.write(chunk)
-    except httpx.TimeoutException:
-        raise PipelineFailure(
-            ErrorCode.OBJECT_STORAGE_TEMPORARILY_UNAVAILABLE,
-            "object storage did not respond before the timeout",
-            details={"dependency": "object-storage", "reason": "timeout"},
-        ) from None
-    except httpx.HTTPError:
-        # Ham provider hatasi/URL disari sizdirilmaz (ADR-002 §12.3).
-        raise PipelineFailure(
-            ErrorCode.OBJECT_STORAGE_TEMPORARILY_UNAVAILABLE,
-            "object storage connection failed",
-            details={"dependency": "object-storage", "reason": "connection error"},
-        ) from None
+                    current_url = str(response.url.join(location))
+                    continue
 
-    return digest.hexdigest(), total
+                if response.status_code >= 500:
+                    raise PipelineFailure(
+                        ErrorCode.OBJECT_STORAGE_TEMPORARILY_UNAVAILABLE,
+                        "object storage returned a server error",
+                        details={"dependency": "object-storage", "reason": "server error"},
+                    )
+                if response.status_code >= 400:
+                    # 403/404: referans gecersiz veya yetki yok -> retry cozmez.
+                    raise PipelineFailure(
+                        ErrorCode.INVALID_DOWNLOAD_REFERENCE,
+                        "download reference was rejected by object storage",
+                        details={"field": "download.url", "reason": "rejected"},
+                    )
+
+                with path.open("wb") as handle:
+                    for chunk in response.iter_bytes(settings.download_chunk_bytes):
+                        total += len(chunk)
+                        if total > max_bytes:
+                            raise PipelineFailure(
+                                ErrorCode.FILE_TOO_LARGE,
+                                "source exceeds the configured maximum size",
+                                details={"reason": "max size exceeded", "limit": max_bytes},
+                            )
+                        digest.update(chunk)
+                        handle.write(chunk)
+                return digest.hexdigest(), total
+        except httpx.TimeoutException:
+            raise PipelineFailure(
+                ErrorCode.OBJECT_STORAGE_TEMPORARILY_UNAVAILABLE,
+                "object storage did not respond before the timeout",
+                details={"dependency": "object-storage", "reason": "timeout"},
+            ) from None
+        except httpx.HTTPError:
+            # Ham provider hatasi/URL disari sizdirilmaz (ADR-002 §12.3).
+            raise PipelineFailure(
+                ErrorCode.OBJECT_STORAGE_TEMPORARILY_UNAVAILABLE,
+                "object storage connection failed",
+                details={"dependency": "object-storage", "reason": "connection error"},
+            ) from None
+
+    raise PipelineFailure(
+        ErrorCode.INVALID_DOWNLOAD_REFERENCE,
+        "download reference exceeded the maximum number of redirects",
+        details={"field": "download.url", "reason": "too many redirects"},
+    )
 
 
 @contextmanager
