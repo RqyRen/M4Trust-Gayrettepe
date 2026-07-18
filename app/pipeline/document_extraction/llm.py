@@ -156,7 +156,22 @@ def extract_structured_data(text: str, settings: Settings) -> dict:
             details={"dependency": "openai", "reason": "connection or server error"},
         ) from exc
 
-    content = response.choices[0].message.content
+    # Bulgu (17 Temmuz 2026, Berke review #9): response.choices[0].message.content
+    # dogrudan json.loads() ile parse ediliyordu; bozuk/beklenmeyen bir cevapta
+    # ham Exception firlar, run_with_retry bunu PipelineFailure SANMADIGI icin
+    # yakalamaz, worker'in son `except Exception` dalina duser -- ve Spring'e
+    # HICBIR ai.job.failed.v1 event'i uretilmez (mesaj sessizce dead-letter'a
+    # gider, Spring o job icin sonsuza kadar bekler). Asagidaki her adim artik
+    # stable, retryable bir PipelineFailure'a cevriliyor.
+    try:
+        content = response.choices[0].message.content
+    except (IndexError, AttributeError) as exc:
+        raise PipelineFailure(
+            ErrorCode.MODEL_PROVIDER_UNAVAILABLE,
+            "LLM provider response did not contain the expected structure",
+            details={"dependency": "openai", "reason": "unexpected response shape"},
+        ) from exc
+
     if not content:
         raise PipelineFailure(
             ErrorCode.MODEL_PROVIDER_UNAVAILABLE,
@@ -164,4 +179,11 @@ def extract_structured_data(text: str, settings: Settings) -> dict:
             details={"dependency": "openai", "reason": "empty response"},
         )
 
-    return json.loads(content)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise PipelineFailure(
+            ErrorCode.MODEL_PROVIDER_UNAVAILABLE,
+            "LLM provider returned a response that could not be parsed as JSON",
+            details={"dependency": "openai", "reason": "malformed response"},
+        ) from exc
