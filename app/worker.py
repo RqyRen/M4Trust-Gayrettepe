@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import time
 
 from app.common.idempotency import Resolution, build_job_store, identity_of
@@ -177,7 +178,14 @@ def main() -> None:
         level=settings.log_level,
     )
     state = WorkerState()
-    start_health_server(state, port=settings.worker_health_port)
+    # Bulgu (17 Temmuz 2026, Berke'nin review'u): Dockerfile HEALTHCHECK'i her
+    # rol icin ayni ${PORT:-8000}'e bakiyor (ai-api ve ai-worker ayni image'i
+    # kullaniyor). ai-api zaten Railway'in verdigi $PORT'u dinliyor; worker'in
+    # health server'i da ayni degiskeni onurlarsa healthcheck rol-agnostik
+    # calisir. $PORT yoksa (local dev) settings.worker_health_port'a duser --
+    # yerelde ai-api ile ayni portta cakismamak icin.
+    health_port = int(os.environ.get("PORT") or settings.worker_health_port)
+    start_health_server(state, port=health_port)
     logger.info("ai-worker starting; consuming command queues")
     start_consuming(handle_command, state=state)
 

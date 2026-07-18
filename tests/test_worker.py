@@ -77,6 +77,31 @@ def test_unconfirmed_publish_is_dead_lettered_and_forgotten(monkeypatch) -> None
     assert worker._store.resolve(identity).resolution is Resolution.NEW
 
 
+def test_main_health_port_honors_railway_port_env_var(monkeypatch) -> None:
+    """Bulgu (17 Temmuz 2026, Berke review): Dockerfile HEALTHCHECK'i her rol icin
+    ayni ${PORT:-8000}'e bakiyor. Worker'in health server'i de $PORT'u
+    onurlamazsa, Railway'de worker container'i saglikli olsa bile
+    healthcheck yanlis portu kontrol eder ve unhealthy gorunur.
+    """
+    captured_port = {}
+    monkeypatch.setattr(worker, "start_health_server", lambda state, *, port: captured_port.update(port=port))
+    monkeypatch.setattr(worker, "start_consuming", lambda on_command, *, state: None)
+
+    monkeypatch.setenv("PORT", "8000")
+    worker.main()
+    assert captured_port["port"] == 8000
+
+
+def test_main_health_port_falls_back_to_settings_when_no_port_env(monkeypatch) -> None:
+    captured_port = {}
+    monkeypatch.setattr(worker, "start_health_server", lambda state, *, port: captured_port.update(port=port))
+    monkeypatch.setattr(worker, "start_consuming", lambda on_command, *, state: None)
+
+    monkeypatch.delenv("PORT", raising=False)
+    worker.main()
+    assert captured_port["port"] == worker.get_settings().worker_health_port
+
+
 def test_valid_failed_event_is_published_and_acked(monkeypatch) -> None:
     monkeypatch.setattr(worker, "_store", JobStore())
 
