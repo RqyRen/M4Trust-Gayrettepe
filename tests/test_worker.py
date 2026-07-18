@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from app import worker
+from app.common.cancellation import JobCancelled
 from app.common.idempotency import JobStore, Resolution, ResolveResult, identity_of
 from app.contracts.errors import ErrorCode, PipelineFailure
 from app.messaging.publisher import PublishConfirmationFailed
@@ -26,6 +27,25 @@ class _FakeMethod:
     routing_key = "test"
 
 
+class _FakeCancellationStore:
+    """Redis'e dokunmayan test double'i -- bu dosya RabbitMQ/Redis gerektirmez."""
+
+    def __init__(self, cancelled_job_ids: set[str] | None = None) -> None:
+        self.cancelled = set(cancelled_job_ids or ())
+        self.mark_calls: list[tuple[str, str]] = []
+
+    def mark_cancelled(self, job_id: str, *, reason: str) -> None:
+        self.cancelled.add(job_id)
+        self.mark_calls.append((job_id, reason))
+
+    def is_cancelled(self, job_id: str) -> bool:
+        return job_id in self.cancelled
+
+    def check(self, job_id: str) -> None:
+        if job_id in self.cancelled:
+            raise JobCancelled(job_id)
+
+
 def _request() -> dict:
     return json.loads((_EXAMPLES / "document-extraction/full-request.json").read_text(encoding="utf-8"))
 
@@ -34,10 +54,15 @@ def _request_body() -> bytes:
     return json.dumps(_request()).encode("utf-8")
 
 
+def _cancel_message() -> dict:
+    return json.loads((_EXAMPLES / "job/cancel-request.json").read_text(encoding="utf-8"))
+
+
 def test_schema_invalid_failed_event_is_dead_lettered_not_published(monkeypatch) -> None:
     monkeypatch.setattr(worker, "_store", JobStore())
+    monkeypatch.setattr(worker, "_cancellation", _FakeCancellationStore())
 
-    def _broken_pipeline(request: dict) -> dict:
+    def _broken_pipeline(request: dict, **_kwargs) -> dict:
         raise PipelineFailure(ErrorCode.CORRUPTED_FILE, "unreadable source")  # non-retryable, tek deneme
 
     monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _broken_pipeline)
@@ -60,10 +85,11 @@ def test_unconfirmed_publish_preserves_computed_result_for_retry(monkeypatch) ->
     # bastan calistirmak yerine redelivery ayni sonucu yeniden publish etmeyi
     # denemeli. commit_pending_publish() bu yuzden publish'ten ONCE cagrilir.
     monkeypatch.setattr(worker, "_store", JobStore())
+    monkeypatch.setattr(worker, "_cancellation", _FakeCancellationStore())
 
     computed_event = {"eventType": "ai.job.completed.v1", "jobType": "DOCUMENT_EXTRACTION"}
 
-    def _ok_pipeline(request: dict) -> dict:
+    def _ok_pipeline(request: dict, **_kwargs) -> dict:
         return computed_event
 
     monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _ok_pipeline)
@@ -137,8 +163,9 @@ def test_lease_lost_before_publish_drops_result_without_publishing(monkeypatch) 
     # kontrolu yapmadan publish ediyordu. commit_pending_publish() False
     # donerse artik publish HIC denenmemeli.
     monkeypatch.setattr(worker, "_store", _LeaseLostStore())
+    monkeypatch.setattr(worker, "_cancellation", _FakeCancellationStore())
 
-    def _ok_pipeline(request: dict) -> dict:
+    def _ok_pipeline(request: dict, **_kwargs) -> dict:
         return {"eventType": "ai.job.completed.v1", "jobType": "DOCUMENT_EXTRACTION"}
 
     monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _ok_pipeline)
@@ -178,8 +205,9 @@ def test_main_health_port_falls_back_to_settings_when_no_port_env(monkeypatch) -
 
 def test_valid_failed_event_is_published_and_acked(monkeypatch) -> None:
     monkeypatch.setattr(worker, "_store", JobStore())
+    monkeypatch.setattr(worker, "_cancellation", _FakeCancellationStore())
 
-    def _broken_pipeline(request: dict) -> dict:
+    def _broken_pipeline(request: dict, **_kwargs) -> dict:
         raise PipelineFailure(ErrorCode.CORRUPTED_FILE, "unreadable source")
 
     monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _broken_pipeline)
@@ -188,5 +216,82 @@ def test_valid_failed_event_is_published_and_acked(monkeypatch) -> None:
     worker.handle_command(channel, _FakeMethod(), None, _request_body())
 
     channel.basic_publish.assert_called_once()
+    channel.basic_ack.assert_called_once_with(delivery_tag=1)
+    channel.basic_nack.assert_not_called()
+
+
+# --- Cancellation (Berke review #1: best-effort cooperative cancellation) ---
+
+
+def test_valid_cancel_message_records_intent_and_acks(monkeypatch) -> None:
+    # Bulgu (Berke review #1): eskiden cancel schema validation'dan gecmeden
+    # dogrudan ACK'leniyor, hicbir intent kaydedilmiyordu.
+    fake_cancellation = _FakeCancellationStore()
+    monkeypatch.setattr(worker, "_cancellation", fake_cancellation)
+
+    channel = MagicMock()
+    body = json.dumps(_cancel_message()).encode("utf-8")
+    worker.handle_command(channel, _FakeMethod(), None, body)
+
+    assert fake_cancellation.mark_calls == [("19191919-1919-4191-8191-191919191919", "USER_REQUESTED")]
+    channel.basic_ack.assert_called_once_with(delivery_tag=1)
+    channel.basic_nack.assert_not_called()
+    channel.basic_publish.assert_not_called()
+
+
+def test_schema_invalid_cancel_message_is_dead_lettered(monkeypatch) -> None:
+    fake_cancellation = _FakeCancellationStore()
+    monkeypatch.setattr(worker, "_cancellation", fake_cancellation)
+
+    payload = _cancel_message()
+    payload["payload"]["reason"] = "NOT_A_VALID_REASON"  # enum ihlali
+    body = json.dumps(payload).encode("utf-8")
+
+    channel = MagicMock()
+    worker.handle_command(channel, _FakeMethod(), None, body)
+
+    channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
+    channel.basic_ack.assert_not_called()
+    assert fake_cancellation.mark_calls == []  # schema-invalid intent hic kaydedilmedi
+
+
+def test_job_cancelled_before_start_is_skipped_without_publish(monkeypatch) -> None:
+    monkeypatch.setattr(worker, "_store", JobStore())
+    request = _request()
+    monkeypatch.setattr(worker, "_cancellation", _FakeCancellationStore({request["jobId"]}))
+
+    pipeline_calls: list[int] = []
+    monkeypatch.setattr(worker, "pipeline_for", lambda job_type: pipeline_calls.append(1))
+
+    channel = MagicMock()
+    worker.handle_command(channel, _FakeMethod(), None, _request_body())
+
+    assert pipeline_calls == []  # pipeline_for'a hic ulasilmadi -- henuz baslamamis job calistirilmadi
+    channel.basic_publish.assert_not_called()
+    channel.basic_ack.assert_called_once_with(delivery_tag=1)
+    channel.basic_nack.assert_not_called()
+    # Claim geri birakildi -- ayni jobId, cancel olmadan tekrar gelirse calisabilmeli.
+    identity = identity_of(request)
+    assert worker._store.resolve(identity).resolution is Resolution.NEW
+
+
+def test_job_cancelled_mid_pipeline_is_skipped_without_publish(monkeypatch) -> None:
+    monkeypatch.setattr(worker, "_store", JobStore())
+    fake_cancellation = _FakeCancellationStore()
+    monkeypatch.setattr(worker, "_cancellation", fake_cancellation)
+
+    def _pipeline_that_gets_cancelled_midway(request: dict, *, check_cancelled) -> dict:
+        # Baska bir mesajla (paralel thread) cancel gelmis gibi simule eder,
+        # sonra pipeline'in kendi checkpoint'i bunu gormeli.
+        fake_cancellation.cancelled.add(request["jobId"])
+        check_cancelled()
+        raise AssertionError("check_cancelled should have raised JobCancelled")
+
+    monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _pipeline_that_gets_cancelled_midway)
+
+    channel = MagicMock()
+    worker.handle_command(channel, _FakeMethod(), None, _request_body())
+
+    channel.basic_publish.assert_not_called()
     channel.basic_ack.assert_called_once_with(delivery_tag=1)
     channel.basic_nack.assert_not_called()

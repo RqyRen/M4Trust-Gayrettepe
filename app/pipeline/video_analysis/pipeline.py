@@ -20,6 +20,7 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Callable
 
 from app.config import get_settings
 from app.contracts.validation import validate_outgoing
@@ -35,23 +36,36 @@ def _utc_now_z() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def run(request: dict) -> dict:
+def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) -> dict:
     """Request envelope'undan canonical `ai.job.completed.v1` event'i uretir.
 
+    `check_cancelled` pahali adimlardan ve her frame'in Roboflow cagrisindan
+    ONCE cagrilir (Berke review #1: best-effort cooperative cancellation) --
+    iptal edilmisse `JobCancelled` firlatir ve kalan frame'ler icin provider
+    cagrisi yapilmaz. Varsayilan no-op.
+
     Firlatir: PipelineFailure — indirme/hash/format/frame/provider hatalarinda
-    (retry runner ele alir).
+    (retry runner ele alir). JobCancelled — cancellation checkpoint'inde.
     """
     started = time.monotonic()
     settings = get_settings()
     source_input = request["payload"]["input"]
     expected_objects = request["payload"]["processing"].get("expectedObjects", [])
 
+    check_cancelled()
     with fetch_source(source_input) as path:
         detect_media_type(path, declared=source_input["mediaType"])
         frames = sample_frames(path, settings)
 
-        logistics_per_frame = [roboflow_client.detect_objects(f.jpeg, settings) for f in frames]
-        damage_per_frame = [roboflow_client.detect_damage(f.jpeg, settings) for f in frames]
+        logistics_per_frame = []
+        damage_per_frame = []
+        for f in frames:
+            # Uzun videolarda ONE frame'lik gecikme yerine her frame'de kontrol
+            # eder -- iptal ortasinda gorulurse kalan frame'ler icin (maliyetli)
+            # Roboflow cagrisi hic yapilmaz.
+            check_cancelled()
+            logistics_per_frame.append(roboflow_client.detect_objects(f.jpeg, settings))
+            damage_per_frame.append(roboflow_client.detect_damage(f.jpeg, settings))
 
     result = aggregation.aggregate_results(
         frames=frames,

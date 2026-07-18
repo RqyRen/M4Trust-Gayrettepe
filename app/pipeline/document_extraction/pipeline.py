@@ -28,6 +28,7 @@ from __future__ import annotations
 import time
 import uuid
 from datetime import datetime, timezone
+from typing import Callable
 
 from app.config import get_settings
 from app.contracts.validation import validate_outgoing
@@ -91,17 +92,23 @@ def _ocr_warnings(extracted: ExtractedDocument) -> list[dict]:
     ]
 
 
-def run(request: dict) -> dict:
+def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) -> dict:
     """Request envelope'undan canonical `ai.job.completed.v1` event'i uretir.
 
+    `check_cancelled` pahali adimlardan ONCE cagrilir (Berke review #1: best-
+    effort cooperative cancellation) -- iptal edilmisse `JobCancelled` firlatir
+    ve bu fonksiyon calismayi hic surdurmez. Varsayilan no-op, testlerin ve
+    dogrudan cagrilarin bu parametreyi vermesini zorunlu kilmaz.
+
     Firlatir: PipelineFailure — indirme/hash/tur/parse/LLM hatalarinda
-    (retry runner ele alir).
+    (retry runner ele alir). JobCancelled — cancellation checkpoint'inde.
     """
     started = time.monotonic()
     settings = get_settings()
     source_input = request["payload"]["input"]
     expected_sha256 = source_input["sha256"].lower()
 
+    check_cancelled()
     with fetch_source(source_input) as path:
         detected_media_type = detect_media_type(path, declared=source_input["mediaType"])
         extracted = extract_text(path, detected_media_type=detected_media_type)
@@ -111,6 +118,7 @@ def run(request: dict) -> dict:
         # ciktiyi etkilemez -- mapping.py vergi kimligini zaten daima maskeliyordu.
         masked_text = mask_pii(full_text)
         truncation_warning = _truncation_warning(masked_text, settings)
+        check_cancelled()
         llm_output = llm.extract_structured_data(masked_text, settings)
 
     document = {

@@ -368,6 +368,32 @@ def test_truncated_document_produces_warning_and_forces_review(base_url: str, mo
     assert any("processing limit" in reason for reason in summary["reviewReasons"])
 
 
+def test_check_cancelled_before_llm_call_stops_pipeline(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Berke review #1: pahali LLM cagrisindan ONCE cancellation kontrol
+    edilmeli. Ilk checkpoint (indirmeden once) gecerli sayilir, ikinci
+    checkpoint'te (LLM'den once) iptal simule edilir -- indirme/parse GERCEK
+    calisir ama LLM'e hic ulasilmamalidir.
+    """
+    from app.common.cancellation import JobCancelled
+
+    calls = {"n": 0}
+
+    def _check_cancelled() -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise JobCancelled("job-under-test")
+
+    llm_calls: list[int] = []
+    monkeypatch.setattr(llm_module, "extract_structured_data", lambda text, settings: llm_calls.append(1))
+
+    request = _request(base_url, "/pdf", _PDF_BYTES)
+    with pytest.raises(JobCancelled):
+        run(request, check_cancelled=_check_cancelled)
+
+    assert llm_calls == []  # LLM cagrisi hic yapilmadi -- maliyet onlendi
+    assert calls["n"] == 2
+
+
 def test_docx_pipeline_produces_schema_valid_completed_event(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
     _mock_llm(monkeypatch)
     request = _request(base_url, "/docx", _DOCX_BYTES, media_type=DOCX)

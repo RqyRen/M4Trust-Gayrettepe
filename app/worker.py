@@ -18,6 +18,7 @@ import logging
 import os
 import time
 
+from app.common.cancellation import JobCancelled, build_cancellation_store
 from app.common.heartbeat import run_with_heartbeat
 from app.common.idempotency import Resolution, build_job_store, identity_of
 from app.common.logging_setup import configure_logging
@@ -34,6 +35,7 @@ from app.worker_health import WorkerState, start_health_server
 logger = logging.getLogger("ai-worker")
 
 _store = build_job_store()
+_cancellation = build_cancellation_store()
 
 
 def _publish_and_record(channel, request: dict, identity, event: dict, *, completed: bool) -> None:
@@ -64,9 +66,28 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
-    # Cancel best-effort; ilk surumde ayri cancelled event zorunlu degil (§20).
+    # Cancel best-effort; ayri cancelled event zorunlu degil (§20), ama mesaj
+    # yine de contract validation'dan gecmeli (bulgu, 17 Temmuz 2026 - Berke
+    # review #1: eskiden schema-invalid bir cancel bile sessizce ACK'leniyordu).
     if raw.get("eventType") == "ai.job.cancel.requested.v1":
-        logger.info("cancel received (best-effort)", extra={"jobId": raw.get("jobId")})
+        try:
+            cancel_envelope = validate_command(raw)
+        except ContractViolation as exc:
+            logger.warning(
+                "cancel contract violation code=%s -> dead-letter",
+                exc.code.value,
+                extra={"jobId": raw.get("jobId")},
+            )
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+        cancel_request = cancel_envelope.model_dump()
+        reason = cancel_request["payload"]["reason"]
+        _cancellation.mark_cancelled(cancel_request["jobId"], reason=reason)
+        logger.info(
+            "cancellation intent recorded reason=%s",
+            reason,
+            extra={"jobId": cancel_request["jobId"]},
+        )
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
 
@@ -137,19 +158,36 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
 
+    if _cancellation.is_cancelled(identity.job_id):
+        # Berke review #1: henuz baslamamis job calistirilmamali. Claim'i geri
+        # birak ki lease bosuna idempotency_lease_seconds kadar kilitli kalmasin.
+        _store.forget(identity)
+        logger.info("job cancelled before start -> skipped, no result published", extra=log_context)
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+        return
+
     started = time.monotonic()
     pipeline = pipeline_for(envelope.jobType)
     heartbeat_interval = get_settings().idempotency_heartbeat_interval_seconds
+    check_cancelled = lambda: _cancellation.check(identity.job_id)
     try:
         # Heartbeat (bulgu, 17 Temmuz 2026 - Berke review #3): pipeline uzun
         # surerse (buyuk OCR+LLM, video) lease'in periyodik yenilenmesi,
         # gercekten calisan bir worker'in job'i yanlislikla "coktu" sayilip
         # baskasina devredilmesini engeller.
         event, attempts = run_with_heartbeat(
-            lambda: run_with_retry(lambda attempt: pipeline(request), DEFAULT_POLICY),
+            lambda: run_with_retry(lambda attempt: pipeline(request, check_cancelled=check_cancelled), DEFAULT_POLICY),
             renew_lease=lambda: _store.renew_lease(identity),
             interval_seconds=heartbeat_interval,
         )
+    except JobCancelled:
+        # Bulgu (Berke review #1): pipeline bir checkpoint'te iptali gordu.
+        # Henuz hicbir sonuc durable yazilmadi (PENDING_PUBLISH'e ulasilmadi),
+        # bu yuzden guvenle atlanabilir -- claim'i geri birak.
+        _store.forget(identity)
+        logger.info("job cancelled mid-pipeline -> skipped, no result published", extra=log_context)
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+        return
     except PipelineFailure as failure:
         duration_ms = int((time.monotonic() - started) * 1000)
         failed_event = build_failed_event(
