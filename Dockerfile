@@ -6,8 +6,14 @@
 # image'i, ayni bagimlilik kilidini paylasir (surum kaymasi riski olmaz).
 #
 # Multi-stage: derleme bagimliliklari (build-essential) final image'a sizmaz.
+#
+# Base image digest ile pinlenmis (Berke review #8, 18 Temmuz 2026): sadece
+# tag ("python:3.14-slim") kullanmak, ayni tag'in zaman icinde farkli bir
+# image'a isaret etmesine izin verir (upstream yeniden yayinlarsa). Digest'i
+# yenilemek icin: `docker pull python:3.14-slim && docker inspect --format
+# '{{index .RepoDigests 0}}' python:3.14-slim`.
 
-FROM python:3.14-slim AS builder
+FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6 AS builder
 WORKDIR /app
 
 # cp314 wheel'i olmayan paketler icin (bu Python surumu henuz yeni) source
@@ -20,7 +26,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
 
 
-FROM python:3.14-slim
+FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
 WORKDIR /app
 
 # tesseract-ocr: OCR fallback (ADR-002 §3.1); tur+eng gerceklestirilen dil

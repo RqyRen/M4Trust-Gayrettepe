@@ -1,45 +1,95 @@
 # M4Trust AI Service - runtime bağımlılıkları
-# NOT: İskelet aşaması. Sürümler ilk kod adımında (Adım 1-2) sabitlenecek.
+#
+# Exact-pinned (Berke review #8, 18 Temmuz 2026): sürümsüz requirements.txt
+# aynı commit'in farklı tarihlerde build edilmesinde farklı FastAPI/Pydantic/
+# OpenAI/Redis/Pika/JSON Schema sürümleri getirebiliyordu. Asagidaki dogrudan
+# bagimliliklar `pip install -r requirements.txt` (temiz bir venv'de) ile
+# cozulup `pip freeze` ile sabitlendi; production image (Dockerfile) da ayni
+# dosyayi kullanir, boylece ai-api/ai-worker ayni surumleri paylasir.
+#
+# Yeniden uretmek icin: temiz bir venv'de `pip install -r requirements.txt`
+# (bu dosyanin "Dogrudan bagimliliklar" bolumundeki surumsuz halini kullanarak),
+# sonra `pip freeze` ile sonucu buraya kopyala.
+#
+# Hash dogrulama (`pip install --require-hashes`) BILEREK eklenmedi: Python
+# 3.14 cok yeni oldugu icin bazi paketler (numpy, lxml, opencv, pydantic-core,
+# rpds-py) henuz her platform icin manylinux wheel yayinlamamis olabilir
+# (Dockerfile builder asamasindaki build-essential source-build fallback'i
+# bu yuzden var). Hash'ler yalniz gercekte indirilen platform-spesifik
+# wheel'lerden uretilebilir; Windows'ta uretilen hash'ler Linux build'inde
+# gecersiz olur ve build'i kirar. Exact version pin + Docker base image
+# digest pin (Dockerfile) su an icin yeterli guvence sagliyor.
+
+# --- Dogrudan bagimliliklar ---
 
 # Web / ai-api (operasyonel endpoint'ler)
-fastapi
-uvicorn[standard]
+fastapi==0.139.2
+uvicorn[standard]==0.51.0
 
 # Messaging (RabbitMQ - ADR-002)
-pika
+pika==1.4.1
 
 # Idempotency job store: paylasimli/kalici storage (coklu worker replica'sinda
 # process-local bellek yeterli degil - bkz. app/common/idempotency.py)
-redis
+redis==8.0.1
 
 # Kaynak indirme: kisa omurlu presigned URL (ADR-001 §6)
 # NOT: object storage'a genel SDK erisimi YOK; sadece HTTP GET.
-httpx
+httpx==0.28.1
 
 # Document extraction: metin cikarimi + LLM (ADR-002 §3.1, ADR-004 §16)
-pypdf
-python-docx
-openai
+pypdf==6.14.2
+python-docx==1.2.0
+openai==2.46.0
 
 # OCR fallback (ADR-002 §3.1 "gerektiginde OCR")
 # NOT: tesseract-ocr binary + tur/eng dil paketleri host/image'da ayrica kurulmali.
-pytesseract
-PyMuPDF
-Pillow
+pytesseract==0.3.13
+PyMuPDF==1.28.0
+Pillow==12.3.0
 
 # Video analysis: frame ornekleme + Roboflow REST cagrisi (ADR-002 §3.2, ADR-004 §16)
 # NOT: resmi inference-sdk paketi bu ortamin Python surumunu desteklemiyor;
 # dogrudan httpx ile REST API'ye baglanilir (ADR-007 §15 minimum dependency).
-opencv-python-headless
+opencv-python-headless==5.0.0.93
 
 # Contract validation (ADR-002 §24)
 # NOT: referencing acikca kullanilir (schema_store.py) - deprecated
 # RefResolver'in scope-stack bug'ini onlemek icin modern Registry API'si.
-jsonschema
-referencing
-PyYAML
+jsonschema==4.26.0
+referencing==0.37.0
+PyYAML==6.0.3
 
 # Config
-pydantic
-pydantic-settings
-python-dotenv
+pydantic==2.13.4
+pydantic-settings==2.14.2
+python-dotenv==1.2.2
+
+# --- Transitive bagimliliklar (yukaridakiler tarafindan otomatik cekilir;
+# elle eklenmez, sadece `pip freeze` cikisiyla senkron tutulur) ---
+annotated-doc==0.0.4
+annotated-types==0.7.0
+anyio==4.14.2
+attrs==26.1.0
+certifi==2026.6.17
+click==8.4.2
+colorama==0.4.6
+distro==1.9.0
+h11==0.16.0
+httpcore==1.0.9
+httptools==0.8.0
+idna==3.18
+jiter==0.16.0
+jsonschema-specifications==2025.9.1
+lxml==6.1.1
+numpy==2.5.1
+packaging==26.2
+pydantic_core==2.46.4
+rpds-py==2026.6.3
+sniffio==1.3.1
+starlette==1.3.1
+tqdm==4.69.0
+typing-inspection==0.4.2
+typing_extensions==4.16.0
+watchfiles==1.2.0
+websockets==16.1.1
