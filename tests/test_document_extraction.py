@@ -248,6 +248,50 @@ def test_llm_call_uses_temperature_zero_for_output_consistency(monkeypatch: pyte
     assert captured_kwargs["temperature"] == 0
 
 
+def _fake_openai_client(*, choices: list):
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            return type("_FakeResponse", (), {"choices": choices})()
+
+    class _FakeChat:
+        completions = _FakeCompletions()
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        chat = _FakeChat()
+
+    return _FakeClient
+
+
+def test_malformed_json_response_becomes_stable_pipeline_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bulgu (17 Temmuz 2026, Berke review #9): bozuk JSON dogrudan json.loads()'a
+    veriliyordu, ham JSONDecodeError firlatiyordu -- run_with_retry bunu
+    PipelineFailure SANMADIGI icin yakalamiyordu ve Spring'e HICBIR
+    ai.job.failed.v1 uretilmiyordu (mesaj sessizce dead-letter'a dusuyordu).
+    """
+    message = type("_FakeMessage", (), {"content": "{not valid json"})()
+    choice = type("_FakeChoice", (), {"message": message})()
+    monkeypatch.setattr(llm_module, "OpenAI", _fake_openai_client(choices=[choice]))
+    settings = Settings(openai_api_key="test-key", openai_model="gpt-5.4")
+
+    with pytest.raises(PipelineFailure) as exc_info:
+        llm_module.extract_structured_data("sample contract text", settings)
+
+    assert exc_info.value.code == ErrorCode.MODEL_PROVIDER_UNAVAILABLE
+
+
+def test_empty_choices_response_becomes_stable_pipeline_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(llm_module, "OpenAI", _fake_openai_client(choices=[]))
+    settings = Settings(openai_api_key="test-key", openai_model="gpt-5.4")
+
+    with pytest.raises(PipelineFailure) as exc_info:
+        llm_module.extract_structured_data("sample contract text", settings)
+
+    assert exc_info.value.code == ErrorCode.MODEL_PROVIDER_UNAVAILABLE
+
+
 # --- Pipeline uctan uca (gercek indirme + hash + tur + GERCEK metin cikarimi, LLM mock) ---
 
 def test_pdf_pipeline_produces_schema_valid_completed_event(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
