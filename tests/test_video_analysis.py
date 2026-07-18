@@ -121,6 +121,34 @@ def test_video_pipeline_produces_schema_valid_completed_event(base_url: str, mon
     validate_outgoing(event)
 
 
+def test_check_cancelled_before_frame_analysis_stops_pipeline(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Berke review #1: pahali Roboflow cagrilarindan ONCE cancellation
+    kontrol edilmeli. Ilk checkpoint (indirmeden once) gecerli sayilir, ikinci
+    checkpoint'te (ilk frame'in Roboflow cagrisindan once) iptal simule
+    edilir -- indirme/frame ornekleme GERCEK calisir ama Roboflow'a hic
+    ulasilmamalidir.
+    """
+    from app.common.cancellation import JobCancelled
+
+    calls = {"n": 0}
+
+    def _check_cancelled() -> None:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise JobCancelled("job-under-test")
+
+    detect_calls: list[int] = []
+    monkeypatch.setattr(roboflow_client, "detect_objects", lambda image, settings: detect_calls.append(1) or [])
+    monkeypatch.setattr(roboflow_client, "detect_damage", lambda image, settings: [])
+
+    request = _request(base_url, "/mp4", _MP4_BYTES)
+    with pytest.raises(JobCancelled):
+        run(request, check_cancelled=_check_cancelled)
+
+    assert detect_calls == []  # Roboflow cagrisi hic yapilmadi -- maliyet onlendi
+    assert calls["n"] == 2
+
+
 def test_advisory_outcome_is_not_a_business_decision(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
     # ADR-002 §10.1 / ADR-003 §22: sonuc advisory'dir, business karar alanlari yok.
     _mock_roboflow(monkeypatch, logistics=[{"class": "sealed_box", "confidence": 0.9}])
