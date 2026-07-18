@@ -6,10 +6,28 @@ Adim 4'te eklenecek.
 """
 from __future__ import annotations
 
+import ssl
+
 import pika
 
 from app.config import get_settings
 from app.messaging.topology import COMMAND_BINDINGS, declare_topology
+
+
+def _ssl_options(settings) -> pika.SSLOptions | None:
+    """TLS/AMQPS kurulumu (bulgu, 18 Temmuz 2026 - Berke review #6).
+
+    `ssl.create_default_context` varsayilan olarak hem CA zincirini hem de
+    hostname'i dogrular (`check_hostname=True`) -- bu yuzden sunucu sertifikasi
+    gecersiz veya baglanilan host sertifikadaki adla uyusmuyorsa baglanti
+    reddedilir. `rabbitmq_ca_cert_path` bos ise sistem CA trust store
+    kullanilir (ör. Railway'in yonetilen bir RabbitMQ'su icin yeterli olabilir);
+    ozel bir CA (ör. self-signed broker) icin dosya yolu verilir.
+    """
+    if not settings.rabbitmq_use_tls:
+        return None
+    context = ssl.create_default_context(cafile=settings.rabbitmq_ca_cert_path or None)
+    return pika.SSLOptions(context, settings.rabbitmq_host)
 
 
 def build_connection() -> pika.BlockingConnection:
@@ -22,6 +40,7 @@ def build_connection() -> pika.BlockingConnection:
         credentials=credentials,
         heartbeat=30,
         blocked_connection_timeout=15,
+        ssl_options=_ssl_options(settings),
     )
     return pika.BlockingConnection(params)
 

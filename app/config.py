@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     rabbitmq_password: str = "guest"
     rabbitmq_vhost: str = "/"
     worker_prefetch: int = 8
+    # TLS/AMQPS (bulgu, 18 Temmuz 2026 - Berke review #6): baglanti duz
+    # host/port/user/password ile kuruluyordu, TLS veya CA dogrulamasi yoktu.
+    # Bos birakilirsa (local dev varsayilani) sistem CA trust store kullanilir;
+    # ozel bir CA gerekiyorsa (ör. self-signed broker) dosya yoluna verilir.
+    rabbitmq_use_tls: bool = False
+    rabbitmq_ca_cert_path: str = ""
 
     # Idempotency job store (ADR-002 §17.1) — Redis: coklu worker replica'si
     # arasinda paylasilan, kalici job durumu. In-memory tek worker'da yeterliydi
@@ -102,6 +108,18 @@ class Settings(BaseSettings):
                 "OBJECT_STORAGE_ALLOWED_HOSTS must be set in production "
                 "(SSRF protection requires an explicit download-host allowlist)"
             )
+        return self
+
+    @model_validator(mode="after")
+    def _require_secure_rabbitmq_in_production(self) -> "Settings":
+        # Berke review #6: production'da `guest` credential'i ve TLS'siz
+        # baglanti kabul edilemez -- sessizce guvensiz calismak yerine
+        # baslangicta acikca coksun.
+        if self.app_env.strip().lower() == "production":
+            if self.rabbitmq_user.strip().lower() == "guest":
+                raise ValueError("RABBITMQ_USER must not be 'guest' in production")
+            if not self.rabbitmq_use_tls:
+                raise ValueError("RABBITMQ_USE_TLS must be enabled in production (AMQPS required)")
         return self
 
 

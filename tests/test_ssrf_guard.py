@@ -15,7 +15,11 @@ from app.storage.ssrf_guard import validate_download_url
 
 
 def _settings(**overrides) -> Settings:
-    return Settings(_env_file=None, **overrides)
+    # RabbitMQ production fail-fast (Berke review #6, app/config.py) tetiklenmesin
+    # diye taban degerler -- bu dosyanin konusu SSRF, RabbitMQ degil.
+    base = {"rabbitmq_user": "ai-worker-prod", "rabbitmq_use_tls": True}
+    base.update(overrides)
+    return Settings(_env_file=None, **base)
 
 
 # --- Production disinda (varsayilan local/staging gelistirme) ---
