@@ -17,6 +17,7 @@ import json
 import logging
 import time
 
+from app.common.heartbeat import run_with_heartbeat
 from app.common.idempotency import Resolution, build_job_store, identity_of
 from app.common.logging_setup import configure_logging
 from app.common.retry import DEFAULT_POLICY, run_with_retry
@@ -115,10 +116,39 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
 
+    if resolved.resolution is Resolution.PENDING_PUBLISH:
+        # Bulgu (17 Temmuz 2026, Berke review #2): onceki calistirmada sonuc
+        # zaten hesaplanip durable yazilmisti ama publish confirm edilememisti
+        # (crash veya broker sorunu). Pipeline'i TEKRAR CALISTIRMADAN -- LLM
+        # deterministik olmadigi icin ayni jobId'ye iki farkli sonuc uretmemek
+        # adina -- ayni event'i yeniden publish etmeyi dener.
+        event = resolved.terminal_event
+        completed = event["eventType"] == "ai.job.completed.v1"
+        try:
+            publish_result(channel, event, completed=completed)
+        except PublishConfirmationFailed:
+            logger.exception("broker still did not confirm pending event -> dead-letter", extra=log_context)
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
+        if not _store.mark_terminal(identity, event):
+            logger.warning("terminal record rejected after pending republish", extra=log_context)
+        logger.info("pending publish retried -> republished and finalized", extra=log_context)
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+        return
+
     started = time.monotonic()
     pipeline = pipeline_for(envelope.jobType)
+    heartbeat_interval = get_settings().idempotency_heartbeat_interval_seconds
     try:
-        event, attempts = run_with_retry(lambda attempt: pipeline(request), DEFAULT_POLICY)
+        # Heartbeat (bulgu, 17 Temmuz 2026 - Berke review #3): pipeline uzun
+        # surerse (buyuk OCR+LLM, video) lease'in periyodik yenilenmesi,
+        # gercekten calisan bir worker'in job'i yanlislikla "coktu" sayilip
+        # baskasina devredilmesini engeller.
+        event, attempts = run_with_heartbeat(
+            lambda: run_with_retry(lambda attempt: pipeline(request), DEFAULT_POLICY),
+            renew_lease=lambda: _store.renew_lease(identity),
+            interval_seconds=heartbeat_interval,
+        )
     except PipelineFailure as failure:
         duration_ms = int((time.monotonic() - started) * 1000)
         failed_event = build_failed_event(
@@ -141,11 +171,23 @@ def handle_command(channel, method, properties, body: bytes) -> None:
             DEFAULT_POLICY.max_attempts,
             extra={**log_context, "attemptNumber": failure.attempt_number},
         )
+        # Bulgu (17 Temmuz 2026, Berke review #2): publish'ten ONCE event'i
+        # durable yazar (PENDING_PUBLISH) VE hala lease sahibi oldugunu
+        # dogrular. Sahiplik kaybedilmisse publish HIC yapilmaz -- baskasi
+        # zaten devralmis/bitirmis demektir.
+        if not _store.commit_pending_publish(identity, failed_event):
+            logger.warning("lease reclaimed before publish; dropping this attempt's failed result", extra=log_context)
+            channel.basic_ack(delivery_tag=method.delivery_tag)
+            return
         try:
             _publish_and_record(channel, request, identity, failed_event, completed=False)
         except PublishConfirmationFailed:
-            _store.forget(identity)
-            logger.exception("broker did not confirm failed event -> dead-letter", extra=log_context)
+            # forget YOK: event PENDING_PUBLISH olarak durable kaldi, sonraki
+            # redelivery pipeline'i tekrar calistirmadan yeniden publish dener.
+            logger.exception(
+                "broker did not confirm failed event -> dead-letter (preserved as PENDING_PUBLISH)",
+                extra=log_context,
+            )
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
         channel.basic_ack(delivery_tag=method.delivery_tag)
@@ -158,11 +200,17 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         return
 
     logger.info("job succeeded attempts=%s", attempts, extra={**log_context, "attemptNumber": attempts})
+    if not _store.commit_pending_publish(identity, event):
+        logger.warning("lease reclaimed before publish; dropping this attempt's result", extra=log_context)
+        channel.basic_ack(delivery_tag=method.delivery_tag)
+        return
     try:
         _publish_and_record(channel, request, identity, event, completed=True)
     except PublishConfirmationFailed:
-        _store.forget(identity)
-        logger.exception("broker did not confirm completed event -> dead-letter", extra=log_context)
+        logger.exception(
+            "broker did not confirm completed event -> dead-letter (preserved as PENDING_PUBLISH)",
+            extra=log_context,
+        )
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
     channel.basic_ack(delivery_tag=method.delivery_tag)

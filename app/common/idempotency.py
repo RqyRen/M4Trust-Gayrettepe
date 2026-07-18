@@ -20,6 +20,18 @@ Iki implementasyon vardir, ayni arayuzu (resolve/mark_terminal/forget) paylasir
   yoktu, coken worker'in job'i sonsuza kadar IN_PROGRESS kilitli kalirdi).
   Eski (artik reclaim edilmis) sahibin gec donup terminal sonucu ezmesi,
   yalniz mevcut ownerId sahibinin terminal yazabilmesiyle engellenir.
+
+Uc durumlu state machine (bulgu, 17 Temmuz 2026 - Berke review #2/#3):
+`PROCESSING -> PENDING_PUBLISH -> TERMINAL`. Eskiden akis "publish et, sonra
+Redis'e terminal yaz" seklindeydi; broker confirm ettikten SONRA ama Redis
+yazilmadan ONCE coken bir worker'da command redelivery pipeline'i BASTAN
+calistirabiliyordu -- LLM deterministik olmadigi icin ayni jobId'ye iki farkli
+completed event uretilebiliyordu. Artik hesaplanan event, publish'ten ONCE
+`commit_pending_publish()` ile durable yazilir (yalniz lease sahibiyken).
+Redelivery `PENDING_PUBLISH` durumunu gorurse pipeline'i TEKRAR CALISTIRMAZ;
+zaten hesaplanmis event'i yeniden publish etmeyi dener. Ayrica `renew_lease()`
+ile worker uzun suren pipeline adimlari sirasinda lease'ini yeniler (heartbeat) --
+gercek islem suresi lease_seconds'i asarsa bile job baskasina kacmaz.
 """
 from __future__ import annotations
 
@@ -41,10 +53,11 @@ class JobIdentity:
 
 
 class Resolution(str, Enum):
-    NEW = "NEW"                  # ilk kez goruldu -> calistir
-    IN_PROGRESS = "IN_PROGRESS"  # ayni is zaten calisiyor -> yeniden baslatma
-    TERMINAL = "TERMINAL"        # terminal sonuc var -> yeniden yayinla
-    CONFLICT = "CONFLICT"        # ayni jobId, farkli input hash -> contract violation
+    NEW = "NEW"                        # ilk kez goruldu (veya reclaim edildi) -> calistir
+    IN_PROGRESS = "IN_PROGRESS"        # ayni is zaten calisiyor -> yeniden baslatma
+    PENDING_PUBLISH = "PENDING_PUBLISH"  # sonuc hesaplandi ama henuz confirm edilmedi -> YENIDEN CALISTIRMADAN yayinla
+    TERMINAL = "TERMINAL"              # terminal sonuc var -> yeniden yayinla
+    CONFLICT = "CONFLICT"              # ayni jobId, farkli input hash -> contract violation
 
 
 @dataclass(frozen=True)
@@ -105,6 +118,16 @@ class JobStore:
             if entry is not None and entry.terminal_event is None:
                 del self._entries[identity.job_id]
 
+    def commit_pending_publish(self, identity: JobIdentity, event: dict) -> bool:
+        """Process-local'de PENDING_PUBLISH ayri bir durum degildir; dogrudan
+        terminal yazar ve her zaman True doner (crash-recovery kavrami yok)."""
+        return self.mark_terminal(identity, event)
+
+    def renew_lease(self, identity: JobIdentity) -> bool:
+        """Process-local'de lease kavrami yok; kayit varsa her zaman True doner."""
+        with self._lock:
+            return identity.job_id in self._entries
+
 
 _KEY_PREFIX = "m4trust:idempotency:"
 
@@ -141,6 +164,7 @@ class RedisJobStore:
                 "ownerId": self._owner_id,
                 "leaseUntil": lease_until,
                 "attempt": attempt,
+                "pendingEvent": None,
                 "terminalEvent": None,
             }
         )
@@ -155,6 +179,7 @@ class RedisJobStore:
                 "ownerId": None,
                 "leaseUntil": None,
                 "attempt": None,
+                "pendingEvent": None,
                 "terminalEvent": event,
             }
         )
@@ -191,6 +216,23 @@ class RedisJobStore:
                         pipe.unwatch()
                         return ResolveResult(Resolution.TERMINAL, entry["terminalEvent"])
 
+                    if entry["state"] == "PENDING_PUBLISH":
+                        # Sonuc zaten hesaplanmis ve durable yazilmis (bulgu,
+                        # 17 Temmuz 2026) -- pipeline'i TEKRAR CALISTIRMA, ayni
+                        # event'i devral ve yeniden publish etmeyi dene. Lease
+                        # suresini BEKLEMEYIZ: bir zaten-hesaplanmis event'i
+                        # yeniden yayinlamaya calismak her zaman guvenlidir
+                        # (mark_terminal hala sahiplik kontrolu yapar), PROCESSING
+                        # durumunun aksine (orada gercek yeniden hesaplama olur).
+                        reclaim_payload = json.dumps(
+                            {**entry, "ownerId": self._owner_id, "leaseUntil": now + self._lease_seconds,
+                             "attempt": (entry.get("attempt") or 0) + 1}
+                        )
+                        pipe.multi()
+                        pipe.set(key, reclaim_payload, ex=self._ttl_seconds)
+                        pipe.execute()
+                        return ResolveResult(Resolution.PENDING_PUBLISH, entry["pendingEvent"])
+
                     if entry["leaseUntil"] is not None and entry["leaseUntil"] > now:
                         # Baska bir worker aktif olarak isliyor, lease hala gecerli.
                         pipe.unwatch()
@@ -208,8 +250,63 @@ class RedisJobStore:
                     # Baska bir worker ayni anda reclaim etti; en guncel kaydi tekrar oku.
                     continue
 
+    def commit_pending_publish(self, identity: JobIdentity, event: dict) -> bool:
+        """PROCESSING -> PENDING_PUBLISH gecisi; hesaplanan event'i publish'ten
+        ONCE durable yazar (bulgu, 17 Temmuz 2026 - Berke review #2).
+
+        Yalniz mevcut lease sahibiyken basarili olur. Bu, publish denemesinden
+        once yapilmasi gereken son adimdir: basarisiz olursa (lease baskasina
+        reclaim edilmis) publish HIC yapilmamalidir -- baskasi zaten devralmis
+        veya bitirmis demektir.
+        """
+        key = self._key(identity.job_id)
+        now = time.time()
+        with self._redis.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                if raw is not None:
+                    entry = json.loads(raw)
+                    if entry.get("state") == "PROCESSING" and entry.get("ownerId") == self._owner_id:
+                        entry["state"] = "PENDING_PUBLISH"
+                        entry["pendingEvent"] = event
+                        entry["leaseUntil"] = now + self._lease_seconds
+                        pipe.multi()
+                        pipe.set(key, json.dumps(entry), ex=self._ttl_seconds)
+                        pipe.execute()
+                        return True
+                pipe.unwatch()
+                return False
+            except redis.WatchError:
+                return False
+
+    def renew_lease(self, identity: JobIdentity) -> bool:
+        """Lease suresini uzatir (heartbeat). Hala mevcut sahipsem True,
+        degilsem (reclaim edilmis veya terminal) False doner -- cagiran
+        taraf bunu gorunce isi guvenle durdurabilir.
+        """
+        key = self._key(identity.job_id)
+        now = time.time()
+        with self._redis.pipeline() as pipe:
+            try:
+                pipe.watch(key)
+                raw = pipe.get(key)
+                if raw is not None:
+                    entry = json.loads(raw)
+                    if entry.get("ownerId") == self._owner_id and entry.get("state") in ("PROCESSING", "PENDING_PUBLISH"):
+                        entry["leaseUntil"] = now + self._lease_seconds
+                        pipe.multi()
+                        pipe.set(key, json.dumps(entry), ex=self._ttl_seconds)
+                        pipe.execute()
+                        return True
+                pipe.unwatch()
+                return False
+            except redis.WatchError:
+                return False
+
     def mark_terminal(self, identity: JobIdentity, event: dict) -> bool:
-        """Terminal sonucu (completed veya failed) kaydeder.
+        """PENDING_PUBLISH -> TERMINAL gecisi; publish confirm edildikten
+        SONRA cagrilir.
 
         Yalniz mevcut lease sahibiyken basarili olur. Doner: kayit gercekten
         yazildiysa True, bu store artik sahip degilse (lease baskasina
@@ -223,7 +320,7 @@ class RedisJobStore:
                 raw = pipe.get(key)
                 if raw is not None:
                     entry = json.loads(raw)
-                    if entry.get("state") == "PROCESSING" and entry.get("ownerId") == self._owner_id:
+                    if entry.get("state") in ("PROCESSING", "PENDING_PUBLISH") and entry.get("ownerId") == self._owner_id:
                         pipe.multi()
                         pipe.set(key, payload, ex=self._ttl_seconds)
                         pipe.execute()

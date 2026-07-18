@@ -166,3 +166,96 @@ def test_active_lease_is_not_reclaimed(store: RedisJobStore) -> None:
 
     assert active_worker.resolve(identity).resolution is Resolution.NEW
     assert other_worker.resolve(identity).resolution is Resolution.IN_PROGRESS  # reclaim YOK
+
+
+# --- PENDING_PUBLISH: publish-oncesi durable commit (bulgu, 17 Temmuz 2026) ---
+
+def test_commit_pending_publish_requires_current_ownership(store: RedisJobStore) -> None:
+    identity = _identity()
+    store.resolve(identity)
+    event = {"eventType": "ai.job.completed.v1", "jobId": identity.job_id}
+    assert store.commit_pending_publish(identity, event) is True
+
+
+def test_commit_pending_publish_fails_for_non_owner(store: RedisJobStore) -> None:
+    identity = _identity()
+    client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
+    owner = store
+    impostor = RedisJobStore(client, ttl_seconds=30, lease_seconds=30)
+
+    assert owner.resolve(identity).resolution is Resolution.NEW
+    event = {"eventType": "ai.job.completed.v1", "jobId": identity.job_id}
+    assert impostor.commit_pending_publish(identity, event) is False
+
+
+def test_crash_between_publish_and_mark_terminal_does_not_recompute(store: RedisJobStore) -> None:
+    """Berke review #2: publish confirm edildikten sonra ama mark_terminal'dan
+    ONCE coken bir worker'da, redelivery pipeline'i BASTAN calistirmamali --
+    ayni (zaten hesaplanmis) event'i yeniden publish etmeyi denemeli.
+    """
+    identity = _identity()
+    client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
+
+    assert store.resolve(identity).resolution is Resolution.NEW
+    computed_event = {"eventType": "ai.job.completed.v1", "jobId": identity.job_id, "result": "unique-llm-output"}
+    assert store.commit_pending_publish(identity, computed_event) is True
+    # Worker burada "coker" -- mark_terminal() hic cagrilmadan.
+
+    # Redelivery: baska bir worker (ya da ayni worker restart) resolve eder.
+    recovering_worker = RedisJobStore(client, ttl_seconds=30, lease_seconds=30)
+    result = recovering_worker.resolve(identity)
+
+    assert result.resolution is Resolution.PENDING_PUBLISH
+    assert result.terminal_event == computed_event  # AYNI event -- pipeline tekrar calismadi
+
+    assert recovering_worker.mark_terminal(identity, computed_event) is True
+    final = recovering_worker.resolve(identity)
+    assert final.resolution is Resolution.TERMINAL
+    assert final.terminal_event == computed_event
+
+
+def test_pending_publish_is_reclaimed_after_lease_expiry(short_lease_store: RedisJobStore) -> None:
+    identity = _identity()
+    client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
+
+    assert short_lease_store.resolve(identity).resolution is Resolution.NEW
+    computed_event = {"eventType": "ai.job.completed.v1", "jobId": identity.job_id}
+    assert short_lease_store.commit_pending_publish(identity, computed_event) is True
+    time.sleep(1.2)  # lease_seconds=1 dolsun
+
+    new_worker = RedisJobStore(client, ttl_seconds=30, lease_seconds=30)
+    result = new_worker.resolve(identity)
+    assert result.resolution is Resolution.PENDING_PUBLISH
+    assert result.terminal_event == computed_event
+
+
+# --- Heartbeat: renew_lease (bulgu, 17 Temmuz 2026) ---
+
+def test_renew_lease_extends_lease_while_still_owner(short_lease_store: RedisJobStore) -> None:
+    """Heartbeat simulasyonu: 1sn'lik lease'i ust uste yenileyerek, tek basina
+    coktan dolmus olacak bir lease'i uzun sureli aktif tutar."""
+    identity = _identity()
+    assert short_lease_store.resolve(identity).resolution is Resolution.NEW
+
+    for _ in range(4):
+        time.sleep(0.4)  # 4 x 0.4s = 1.6s, tek seferlik 1s lease'i coktan asar
+        assert short_lease_store.renew_lease(identity) is True
+
+    client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
+    other_worker = RedisJobStore(client, ttl_seconds=30, lease_seconds=30)
+    # Heartbeat sayesinde lease surekli tazelendi -- baskasi hala devralamaz.
+    assert other_worker.resolve(identity).resolution is Resolution.IN_PROGRESS
+
+
+def test_renew_lease_fails_after_reclaim(short_lease_store: RedisJobStore) -> None:
+    identity = _identity()
+    client = redis_lib.Redis(host=_REDIS_HOST, port=_REDIS_PORT, decode_responses=True)
+    old_owner = short_lease_store  # lease_seconds=1
+    new_owner = RedisJobStore(client, ttl_seconds=30, lease_seconds=30)
+
+    assert old_owner.resolve(identity).resolution is Resolution.NEW
+    time.sleep(1.2)
+    assert new_owner.resolve(identity).resolution is Resolution.NEW  # reclaim
+
+    # Eski sahip artik lease'ini yenileyemez -- kaybettigini fark edebilir.
+    assert old_owner.renew_lease(identity) is False
