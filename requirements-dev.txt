@@ -1,5 +1,13 @@
 # Yalniz local gelistirme/test icin. Production image'a dahil edilmez (ADR-007 §15).
+# Exact-pinned (Berke review #8) - bkz. requirements.txt basligi.
 -r requirements.txt
 
-pytest
-fpdf2  # test fixture olarak gercek/gecerli minimal PDF uretmek icin
+pytest==9.1.1
+fpdf2==2.8.7  # test fixture olarak gercek/gecerli minimal PDF uretmek icin
+
+# --- fpdf2/pytest'in getirdigi, requirements.txt'te olmayan transitive'ler ---
+Pygments==2.20.0
+defusedxml==0.7.1
+fonttools==4.63.0
+iniconfig==2.3.0
+pluggy==1.6.0
