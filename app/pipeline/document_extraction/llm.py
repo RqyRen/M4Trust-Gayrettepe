@@ -10,6 +10,7 @@ riskler mumkun oldugunca API seviyesinde onlenir.
 from __future__ import annotations
 
 import json
+import logging
 
 from openai import (
     APIConnectionError,
@@ -21,6 +22,11 @@ from openai import (
 
 from app.config import Settings
 from app.contracts.errors import ErrorCode, PipelineFailure
+from app.pipeline.document_extraction import legal_rag
+
+logger = logging.getLogger(__name__)
+
+_LEGAL_CONTEXT_TOP_K = 5
 
 SYSTEM_PROMPT = """You are a contract analysis engine for M4Trust, a B2B deal platform.
 Extract structured, factual information from the given contract text. Do not invent
@@ -109,6 +115,34 @@ _LLM_OUTPUT_SCHEMA = {
 }
 
 
+def _build_legal_context(text: str) -> str | None:
+    """Sozlesme metnine en ilgili Turk mevzuati maddelerini getirip LLM icin ek baglam metni uretir.
+
+    Legal RAG bir kalite artiricidir, cikarimin on kosulu degil: retrieval basarisiz
+    olursa (kulliyat henuz embed edilmemis, model yuklenemedi vb.) None doner ve
+    cikarim baglamsiz devam eder -- bu ozellik hicbir zaman extract_structured_data'yi
+    kirmamali.
+    """
+    try:
+        results = legal_rag.retrieve(text, top_k=_LEGAL_CONTEXT_TOP_K)
+    except Exception:
+        logger.warning("legal_rag retrieval failed, continuing without legal context", exc_info=True)
+        return None
+    if not results:
+        return None
+
+    lines = []
+    for r in results:
+        label = f"MADDE {r['madde_no']}" if "madde_no" in r else r.get("heading", "")
+        lines.append(f"- {r['source']} {label}: {r['text'][:500]}")
+    return (
+        "The following Turkish legal/regulatory articles were automatically retrieved as "
+        "potentially relevant background for this contract (informational only -- use them "
+        "as context when classifying rules such as PENALTY, PAYMENT, or TERMINATION; do not "
+        "copy them into the output):\n\n" + "\n".join(lines)
+    )
+
+
 def extract_structured_data(text: str, settings: Settings) -> dict:
     """Sozlesme metnini GPT-5.4'e gonderir, yapilandirilmis JSON dondurur.
 
@@ -124,14 +158,17 @@ def extract_structured_data(text: str, settings: Settings) -> dict:
     truncated = text[: settings.openai_max_source_chars]
     client = OpenAI(api_key=settings.openai_api_key, timeout=settings.openai_timeout_seconds)
 
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    legal_context = _build_legal_context(truncated)
+    if legal_context:
+        messages.append({"role": "system", "content": legal_context})
+    messages.append({"role": "user", "content": truncated})
+
     try:
         response = client.chat.completions.create(
             model=settings.openai_model,
             temperature=0,  # calistirma-calistirmaya tutarlilik (ayni sozlesme -> ayni cikti)
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": truncated},
-            ],
+            messages=messages,
             response_format={
                 "type": "json_schema",
                 "json_schema": {"name": "m4trust_document_extraction", "strict": True, "schema": _LLM_OUTPUT_SCHEMA},

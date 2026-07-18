@@ -49,6 +49,10 @@ COPY app/ ./app
 # Sadece runtime'da okunan schema'lar kopyalanir (ADR-007 §15 minimum image);
 # openapi/asyncapi/examples/scripts sadece gelistirme zamaninda kullanilir.
 COPY contracts/schemas/ ./contracts/schemas
+# Legal RAG: yalniz onceden uretilmis embedding'ler kopyalanir (legal_rag.py'nin
+# okudugu tek sey); raw/ (ham kanun PDF/Markdown) ve chunks/ (ara adim) ile
+# scripts/ (build-time araclari) runtime'da gerekmez, image'a girmez.
+COPY legal_corpus/embeddings/ ./legal_corpus/embeddings
 
 RUN useradd --create-home --uid 10001 appuser
 USER appuser

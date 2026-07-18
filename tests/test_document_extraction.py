@@ -148,6 +148,18 @@ class _Handler(BaseHTTPRequestHandler):
         return
 
 
+@pytest.fixture(autouse=True)
+def _no_real_legal_rag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bu dosyadaki testler legal grounding'i degil, extraction'i test ediyor.
+
+    legal_rag.retrieve() mock'lanmazsa gercek BGE-M3 modelini belleye yukler
+    (agir, ~saniyeler suren bir islem) -- bu dosyadaki her test bunu bilmeden
+    odemis olur. Varsayilan olarak bos sonuc donduruyoruz; retrieval'in
+    kendisini test eden test bunu kendi icinde ayrica override eder.
+    """
+    monkeypatch.setattr(llm_module.legal_rag, "retrieve", lambda *a, **k: [])
+
+
 @pytest.fixture(scope="module")
 def base_url() -> str:
     server = HTTPServer(("127.0.0.1", 0), _Handler)
@@ -250,6 +262,45 @@ def test_llm_call_uses_temperature_zero_for_output_consistency(monkeypatch: pyte
     llm_module.extract_structured_data("sample contract text", settings)
 
     assert captured_kwargs["temperature"] == 0
+
+
+def test_legal_rag_retrieval_failure_does_not_break_extraction(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Legal RAG bir kalite artiricidir, extraction'in on kosulu degil: kanun
+    kulliyati embed edilmemis olsa veya retrieval baska bir sebeple patlasa
+    bile extract_structured_data eskisi gibi basariyla sonuc uretmeye devam
+    etmeli, sadece baglamsiz kalmali.
+    """
+    captured_kwargs: dict = {}
+
+    class _FakeMessage:
+        content = json.dumps(_CANNED_LLM_OUTPUT)
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            captured_kwargs.update(kwargs)
+            return type("_FakeResponse", (), {"choices": [type("_FakeChoice", (), {"message": _FakeMessage()})()]})()
+
+    class _FakeChat:
+        completions = _FakeCompletions()
+
+    class _FakeClient:
+        def __init__(self, **kwargs):
+            pass
+
+        chat = _FakeChat()
+
+    def _broken_retrieve(*args, **kwargs):
+        raise FileNotFoundError("legal corpus embeddings not built")
+
+    monkeypatch.setattr(llm_module, "OpenAI", _FakeClient)
+    monkeypatch.setattr(llm_module.legal_rag, "retrieve", _broken_retrieve)
+    settings = Settings(openai_api_key="test-key", openai_model="gpt-5.4")
+
+    result = llm_module.extract_structured_data("sample contract text", settings)
+
+    assert result == _CANNED_LLM_OUTPUT
+    # Legal context sistem mesaji hic eklenmemis olmali -- sadece SYSTEM_PROMPT + user mesaji.
+    assert len(captured_kwargs["messages"]) == 2
 
 
 def _fake_openai_client(*, choices: list):
