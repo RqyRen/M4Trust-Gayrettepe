@@ -64,7 +64,11 @@ def _tracked_files(base: Path) -> list[Path]:
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    # Normalize CRLF -> LF before hashing: these are all text files (JSON/
+    # YAML/MD), and git's autocrlf checks them out as CRLF on Windows but LF
+    # on CI's Linux runner. Without this, every tracked file "changes" on
+    # every platform switch even though the content is identical.
+    return hashlib.sha256(path.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
 
 
 def _rel(path: Path, base: Path) -> str:
@@ -122,7 +126,7 @@ def cmd_sync(spring_repo: Path, *, force: bool, root: Path = ROOT) -> int:
         upstream = spring_contracts / rel
         if not upstream.is_file():
             mismatches.append(f"only in this repo (not in Spring's contracts/): {rel}")
-        elif upstream.read_bytes() != path.read_bytes():
+        elif upstream.read_bytes().replace(b"\r\n", b"\n") != path.read_bytes().replace(b"\r\n", b"\n"):
             mismatches.append(f"differs from Spring's contracts/: {rel}")
 
     upstream_files = {_rel(p, spring_contracts) for p in _tracked_files(spring_contracts)}
