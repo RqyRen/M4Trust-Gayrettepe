@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from app.config import get_settings
 from app.contracts.errors import ErrorCode, PipelineFailure
 from app.storage.object_store import fetch_source
 
@@ -38,6 +39,18 @@ class _Handler(BaseHTTPRequestHandler):
             self.end_headers()
         elif self.path == "/boom":
             self.send_response(503)
+            self.end_headers()
+        elif self.path == "/redirect-same-host":
+            self.send_response(302)
+            self.send_header("Location", "/ok")
+            self.end_headers()
+        elif self.path == "/redirect-to-metadata-endpoint":
+            self.send_response(302)
+            self.send_header("Location", "http://169.254.169.254/latest/meta-data/")
+            self.end_headers()
+        elif self.path == "/redirect-loop":
+            self.send_response(302)
+            self.send_header("Location", "/redirect-loop")
             self.end_headers()
         else:
             self.send_response(404)
@@ -137,3 +150,59 @@ def test_failure_details_do_not_leak_url(base_url: str) -> None:
             pass
     assert base_url not in exc.value.message
     assert base_url not in str(exc.value.details)
+
+
+# --- SSRF korumasi (Berke review #4) ---
+
+
+def test_redirect_to_same_host_still_succeeds(base_url: str) -> None:
+    # Backward-compat: allowlist yapilandirilmamissa (test ortami varsayilani)
+    # ayni host'a redirect eskisi gibi calismaya devam eder.
+    with fetch_source(_input(f"{base_url}/redirect-same-host")) as path:
+        assert path.read_bytes() == _CONTENT
+
+
+def test_redirect_loop_is_rejected_without_hanging(base_url: str) -> None:
+    with pytest.raises(PipelineFailure) as exc:
+        with fetch_source(_input(f"{base_url}/redirect-loop")) as _:
+            pass
+    assert exc.value.code is ErrorCode.INVALID_DOWNLOAD_REFERENCE
+
+
+def test_redirect_to_disallowed_host_is_rejected_when_allowlist_configured(
+    base_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bulgu (18 Temmuz 2026, Berke review #4): allowlist'teki bir host bile
+    saldirganin kontrolundeki bir yanita 302 ile baska bir hosta (ornegin
+    cloud metadata endpoint'i) yonlendirebilirdi -- eskiden httpx bunu
+    sorgusuz takip ediyordu. Allowlist acikca yapilandirildiginda, her
+    redirect hedefi de AYNI kontrolden gecmeli.
+    """
+    settings = get_settings()
+    monkeypatch.setattr(settings, "object_storage_allowed_hosts", "127.0.0.1")
+
+    with pytest.raises(PipelineFailure) as exc:
+        with fetch_source(_input(f"{base_url}/redirect-to-metadata-endpoint")) as _:
+            pass
+    assert exc.value.code is ErrorCode.INVALID_DOWNLOAD_REFERENCE
+
+
+def test_disallowed_initial_host_is_rejected_before_any_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "object_storage_allowed_hosts", "objects.m4trust.internal")
+
+    with pytest.raises(PipelineFailure) as exc:
+        with fetch_source(_input("http://169.254.169.254/latest/meta-data/")) as _:
+            pass
+    assert exc.value.code is ErrorCode.INVALID_DOWNLOAD_REFERENCE
+
+
+def test_production_rejects_plain_http_even_for_allowed_host(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = get_settings()
+    monkeypatch.setattr(settings, "object_storage_allowed_hosts", "127.0.0.1")
+    monkeypatch.setattr(settings, "app_env", "production")
+
+    with pytest.raises(PipelineFailure) as exc:
+        with fetch_source(_input(f"{base_url}/ok")) as _:
+            pass
+    assert exc.value.code is ErrorCode.INVALID_DOWNLOAD_REFERENCE
