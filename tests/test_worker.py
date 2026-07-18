@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from app import worker
-from app.common.idempotency import JobStore, Resolution, identity_of
+from app.common.idempotency import JobStore, Resolution, ResolveResult, identity_of
 from app.contracts.errors import ErrorCode, PipelineFailure
 from app.messaging.publisher import PublishConfirmationFailed
 
@@ -52,13 +52,19 @@ def test_schema_invalid_failed_event_is_dead_lettered_not_published(monkeypatch)
     channel.basic_publish.assert_not_called()
 
 
-def test_unconfirmed_publish_is_dead_lettered_and_forgotten(monkeypatch) -> None:
-    # Bulgu (16 Temmuz 2026): broker mesaji confirm etmezse (ör. Spring'in
-    # queue'su henuz bagli degilse) job sessizce "tamamlandi" sayilmamali.
+def test_unconfirmed_publish_preserves_computed_result_for_retry(monkeypatch) -> None:
+    # Bulgu (16 Temmuz 2026 + 17 Temmuz 2026 guncelleme): broker mesaji confirm
+    # etmezse job sessizce "tamamlandi" sayilmamali (dead-letter). Ama artik
+    # hesaplanan sonuc da KAYBOLMAMALI/unutulmamali (bulgu, 17 Temmuz 2026 -
+    # Berke review #2): pipeline'i (LLM dahil, deterministik olmayabilir)
+    # bastan calistirmak yerine redelivery ayni sonucu yeniden publish etmeyi
+    # denemeli. commit_pending_publish() bu yuzden publish'ten ONCE cagrilir.
     monkeypatch.setattr(worker, "_store", JobStore())
 
+    computed_event = {"eventType": "ai.job.completed.v1", "jobType": "DOCUMENT_EXTRACTION"}
+
     def _ok_pipeline(request: dict) -> dict:
-        return {"eventType": "ai.job.completed.v1", "jobType": "DOCUMENT_EXTRACTION"}
+        return computed_event
 
     monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _ok_pipeline)
 
@@ -72,9 +78,77 @@ def test_unconfirmed_publish_is_dead_lettered_and_forgotten(monkeypatch) -> None
 
     channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
     channel.basic_ack.assert_not_called()
-    # Kayit unutulmus olmali -- ayni job tekrar geldiginde NEW olarak islenebilsin.
+    # Hesaplanan sonuc korunmus olmali -- bir sonraki denemede TEKRAR
+    # CALISTIRILMAZ, ayni event yeniden publish edilmeye calisilir.
     identity = identity_of(_request())
-    assert worker._store.resolve(identity).resolution is Resolution.NEW
+    result = worker._store.resolve(identity)
+    assert result.resolution is Resolution.TERMINAL
+    assert result.terminal_event == computed_event
+
+
+class _PendingPublishStore:
+    """resolve() hep PENDING_PUBLISH doner -- pipeline'in tekrar CALISMADIGINI
+    kanitlamak icin (bulgu, 17 Temmuz 2026 - Berke review #2)."""
+
+    def __init__(self, pending_event: dict) -> None:
+        self._pending_event = pending_event
+        self.mark_terminal_calls: list[dict] = []
+
+    def resolve(self, identity):
+        return ResolveResult(Resolution.PENDING_PUBLISH, self._pending_event)
+
+    def mark_terminal(self, identity, event):
+        self.mark_terminal_calls.append(event)
+        return True
+
+
+def test_pending_publish_redelivery_republishes_without_recomputing(monkeypatch) -> None:
+    pending_event = {"eventType": "ai.job.completed.v1", "jobType": "DOCUMENT_EXTRACTION", "result": "already-computed"}
+    fake_store = _PendingPublishStore(pending_event)
+    monkeypatch.setattr(worker, "_store", fake_store)
+
+    pipeline_calls: list[int] = []
+    monkeypatch.setattr(worker, "pipeline_for", lambda job_type: pipeline_calls.append(1))
+
+    channel = MagicMock()
+    worker.handle_command(channel, _FakeMethod(), None, _request_body())
+
+    assert pipeline_calls == []  # pipeline HIC calismadi -- yeniden hesaplama yok
+    channel.basic_publish.assert_called_once()
+    published_body = json.loads(channel.basic_publish.call_args.kwargs["body"])
+    assert published_body == pending_event
+    assert fake_store.mark_terminal_calls == [pending_event]
+    channel.basic_ack.assert_called_once_with(delivery_tag=1)
+    channel.basic_nack.assert_not_called()
+
+
+class _LeaseLostStore:
+    """commit_pending_publish() hep False doner (lease baskasina reclaim edilmis)."""
+
+    def resolve(self, identity):
+        return ResolveResult(Resolution.NEW)
+
+    def commit_pending_publish(self, identity, event):
+        return False
+
+
+def test_lease_lost_before_publish_drops_result_without_publishing(monkeypatch) -> None:
+    # Bulgu (17 Temmuz 2026 - Berke review #3): eskiden worker sahiplik
+    # kontrolu yapmadan publish ediyordu. commit_pending_publish() False
+    # donerse artik publish HIC denenmemeli.
+    monkeypatch.setattr(worker, "_store", _LeaseLostStore())
+
+    def _ok_pipeline(request: dict) -> dict:
+        return {"eventType": "ai.job.completed.v1", "jobType": "DOCUMENT_EXTRACTION"}
+
+    monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _ok_pipeline)
+
+    channel = MagicMock()
+    worker.handle_command(channel, _FakeMethod(), None, _request_body())
+
+    channel.basic_publish.assert_not_called()
+    channel.basic_ack.assert_called_once_with(delivery_tag=1)
+    channel.basic_nack.assert_not_called()
 
 
 def test_main_health_port_honors_railway_port_env_var(monkeypatch) -> None:

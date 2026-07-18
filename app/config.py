@@ -54,6 +54,12 @@ class Settings(BaseSettings):
     # kadar kilitli kalabiliyordu). Gozlemlenen en uzun pipeline calismasindan
     # (OCR+LLM veya video) cok daha genis tutulur.
     idempotency_lease_seconds: int = 600  # 10 dakika
+    # Pipeline calisirken lease'in periyodik olarak yenilenme sikligi (bulgu,
+    # 17 Temmuz 2026 - Berke review #3: heartbeat yoktu, lease_seconds'i asan
+    # gercek islemler yanlislikla "coktu" sayilip baskasina devredilebiliyordu).
+    # lease_seconds'in bir bolumu: bir heartbeat kacsa bile lease dolmadan
+    # bir sonraki heartbeat yetisir.
+    idempotency_heartbeat_interval_seconds: float = 180.0  # 3 dakika (600/3.33)
 
     # Kaynak indirme (ADR-001 §6, ADR-002 §7.1)
     download_timeout_seconds: float = 30.0
