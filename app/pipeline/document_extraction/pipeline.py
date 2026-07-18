@@ -32,6 +32,7 @@ from typing import Callable
 
 from app.config import get_settings
 from app.contracts.validation import validate_outgoing
+from app.pipeline.deadline import check_deadline
 from app.pipeline.document_extraction import llm, mapping
 from app.pipeline.document_extraction.media import detect_media_type
 from app.pipeline.document_extraction.pii_masking import PRIVACY_VERSION, mask_pii
@@ -100,15 +101,24 @@ def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) ->
     ve bu fonksiyon calismayi hic surdurmez. Varsayilan no-op, testlerin ve
     dogrudan cagrilarin bu parametreyi vermesini zorunlu kilmaz.
 
-    Firlatir: PipelineFailure — indirme/hash/tur/parse/LLM hatalarinda
-    (retry runner ele alir). JobCancelled — cancellation checkpoint'inde.
+    Ayni checkpoint'lerde `payload.deadlineAt` de kontrol edilir (Berke
+    review #5): suresi gecmis bir job icin pahali indirme/LLM cagrisi
+    yapilmaz, stable `INVALID_DEADLINE` failure uretilir. `run_with_retry`
+    her denemede bu fonksiyonu BASTAN calistirdigi icin, retry'lar arasinda
+    da dogal olarak yeniden degerlendirilir.
+
+    Firlatir: PipelineFailure — indirme/hash/tur/parse/LLM/deadline
+    hatalarinda (retry runner ele alir). JobCancelled — cancellation
+    checkpoint'inde.
     """
     started = time.monotonic()
     settings = get_settings()
     source_input = request["payload"]["input"]
     expected_sha256 = source_input["sha256"].lower()
+    deadline_at = request["payload"]["deadlineAt"]
 
     check_cancelled()
+    check_deadline(deadline_at)
     with fetch_source(source_input) as path:
         detected_media_type = detect_media_type(path, declared=source_input["mediaType"])
         extracted = extract_text(path, detected_media_type=detected_media_type)
@@ -119,6 +129,7 @@ def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) ->
         masked_text = mask_pii(full_text)
         truncation_warning = _truncation_warning(masked_text, settings)
         check_cancelled()
+        check_deadline(deadline_at)
         llm_output = llm.extract_structured_data(masked_text, settings)
 
     document = {

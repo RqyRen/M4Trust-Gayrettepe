@@ -24,6 +24,7 @@ from typing import Callable
 
 from app.config import get_settings
 from app.contracts.validation import validate_outgoing
+from app.pipeline.deadline import check_deadline
 from app.pipeline.video_analysis import aggregation, roboflow_client
 from app.pipeline.video_analysis.frames import sample_frames
 from app.pipeline.video_analysis.media import detect_media_type
@@ -44,15 +45,22 @@ def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) ->
     iptal edilmisse `JobCancelled` firlatir ve kalan frame'ler icin provider
     cagrisi yapilmaz. Varsayilan no-op.
 
-    Firlatir: PipelineFailure — indirme/hash/format/frame/provider hatalarinda
-    (retry runner ele alir). JobCancelled — cancellation checkpoint'inde.
+    Ayni checkpoint'lerde `payload.deadlineAt` de kontrol edilir (Berke
+    review #5): suresi gecmis bir job icin pahali indirme/Roboflow cagrisi
+    yapilmaz, stable `INVALID_DEADLINE` failure uretilir.
+
+    Firlatir: PipelineFailure — indirme/hash/format/frame/provider/deadline
+    hatalarinda (retry runner ele alir). JobCancelled — cancellation
+    checkpoint'inde.
     """
     started = time.monotonic()
     settings = get_settings()
     source_input = request["payload"]["input"]
     expected_objects = request["payload"]["processing"].get("expectedObjects", [])
+    deadline_at = request["payload"]["deadlineAt"]
 
     check_cancelled()
+    check_deadline(deadline_at)
     with fetch_source(source_input) as path:
         detect_media_type(path, declared=source_input["mediaType"])
         frames = sample_frames(path, settings)
@@ -61,9 +69,10 @@ def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) ->
         damage_per_frame = []
         for f in frames:
             # Uzun videolarda ONE frame'lik gecikme yerine her frame'de kontrol
-            # eder -- iptal ortasinda gorulurse kalan frame'ler icin (maliyetli)
-            # Roboflow cagrisi hic yapilmaz.
+            # eder -- iptal/deadline ortasinda gorulurse kalan frame'ler icin
+            # (maliyetli) Roboflow cagrisi hic yapilmaz.
             check_cancelled()
+            check_deadline(deadline_at)
             logistics_per_frame.append(roboflow_client.detect_objects(f.jpeg, settings))
             damage_per_frame.append(roboflow_client.detect_damage(f.jpeg, settings))
 
