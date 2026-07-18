@@ -117,6 +117,7 @@ _BLANK_SCANNED_PDF_BYTES = _blank_scanned_pdf_bytes()
 _HYBRID_PDF_BYTES = _hybrid_pdf_bytes()
 _JUNK = b"just plain text, not a document"
 _MALFORMED_PDF = b"%PDF-1.7\n" + b"not a real pdf body, no xref table " * 20
+_PDF_WITH_TAX_ID_BYTES = _real_pdf_bytes("ACME Corp, Vergi No: 1234567890, agrees to pay 1000 EUR within 30 days.")
 
 _BODIES = {
     "/pdf": _PDF_BYTES,
@@ -127,6 +128,7 @@ _BODIES = {
     "/scanned": _SCANNED_PDF_BYTES,
     "/blank-scanned": _BLANK_SCANNED_PDF_BYTES,
     "/hybrid": _HYBRID_PDF_BYTES,
+    "/pdf-with-tax-id": _PDF_WITH_TAX_ID_BYTES,
 }
 
 
@@ -263,6 +265,40 @@ def test_pdf_pipeline_produces_schema_valid_completed_event(base_url: str, monke
     assert document["textExtractionMethod"] == "DIGITAL_PDF"
     assert document["pageCount"] == 1
     assert document["contentSha256"] == hashlib.sha256(_PDF_BYTES).hexdigest()
+
+
+def test_llm_never_receives_raw_tax_id_but_output_shape_is_unchanged(
+    base_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bulgu (17 Temmuz 2026): ham metin (vergi no dahil) LLM'e maskesiz gidiyordu.
+
+    Gercek bir PDF'e gercek bir vergi no gomer, gercek indirme+parse'tan sonra
+    LLM'e ULASAN metni yakalar (spy), ham numaranin ORADA hic bulunmadigini
+    kanitlar -- canonical cikti sekli/semasi ise degismeden ayni kalir.
+    """
+    tax_id = "1234567890"
+
+    captured_text: dict[str, str] = {}
+
+    def _spy_llm(text: str, settings):
+        captured_text["value"] = text
+        return _CANNED_LLM_OUTPUT
+
+    monkeypatch.setattr(llm_module, "extract_structured_data", _spy_llm)
+    request = _request(base_url, "/pdf-with-tax-id", _PDF_WITH_TAX_ID_BYTES)
+    event = run(request)
+
+    assert tax_id not in captured_text["value"]
+    assert "[MASKED_TAX_ID]" in captured_text["value"]
+
+    # Canonical cikti sekli hic degismedi: ayni alanlar, hala schema-valid,
+    # vergi kimligi burada zaten (mapping.py yuzunden) her zaman maskeliydi.
+    validate_outgoing(event)
+    assert event["payload"]["result"]["parties"][0]["taxIdentifier"] == {
+        "value": None,
+        "masked": True,
+        "confidence": 0.8,
+    }
 
 
 def test_truncated_document_produces_warning_and_forces_review(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:

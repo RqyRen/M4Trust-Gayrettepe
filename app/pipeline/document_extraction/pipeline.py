@@ -9,9 +9,11 @@ ADR'deki adimlar ve mevcut durum:
                                esiginin altindaysa otomatik devreye girer,
                                HYBRID/OCR olarak isaretlenir, OCR_USED warning)
   Metin normalizasyonu     -> KAPSAM DISI (ilk surumde yapilmiyor)
-  Hassas veri analizi      -> KISMEN: vergi kimlik numaralari daima maskelenir
-                               (mapping.py); genel PII taramasi kapsam disi
-  Maskeleme                -> KISMEN (yukaridaki gibi, sinirli kapsam)
+  Hassas veri analizi      -> GERCEK: vergi no/TC kimlik/IBAN/e-posta/telefon
+                               LLM'e GITMEDEN ONCE maskelenir (pii_masking.py,
+                               bulgu 17 Temmuz 2026); vergi kimligi ayrica
+                               canonical ciktida da her zaman maskelenir (mapping.py)
+  Maskeleme                -> GERCEK (provider-oncesi + canonical, yukaridaki gibi)
   RAG                      -> KAPSAM DISI (ilk surumde retrieval kullanilmiyor)
   LLM extraction           -> GERCEK (GPT-5.4, llm.py)
   Canonical schema donusumu-> GERCEK (mapping.py)
@@ -31,6 +33,7 @@ from app.config import get_settings
 from app.contracts.validation import validate_outgoing
 from app.pipeline.document_extraction import llm, mapping
 from app.pipeline.document_extraction.media import detect_media_type
+from app.pipeline.document_extraction.pii_masking import PRIVACY_VERSION, mask_pii
 from app.pipeline.document_extraction.text_extraction import ExtractedDocument, extract_text
 from app.storage.object_store import fetch_source
 
@@ -103,8 +106,12 @@ def run(request: dict) -> dict:
         detected_media_type = detect_media_type(path, declared=source_input["mediaType"])
         extracted = extract_text(path, detected_media_type=detected_media_type)
         full_text = extracted.full_text()
-        truncation_warning = _truncation_warning(full_text, settings)
-        llm_output = llm.extract_structured_data(full_text, settings)
+        # Provider'a (OpenAI) gitmeden once maskele (bulgu, 17 Temmuz 2026):
+        # vergi no/TC kimlik/IBAN/e-posta/telefon LLM'e hic ulasmaz. Canonical
+        # ciktiyi etkilemez -- mapping.py vergi kimligini zaten daima maskeliyordu.
+        masked_text = mask_pii(full_text)
+        truncation_warning = _truncation_warning(masked_text, settings)
+        llm_output = llm.extract_structured_data(masked_text, settings)
 
     document = {
         "detectedMediaType": detected_media_type,
@@ -153,7 +160,7 @@ def run(request: dict) -> dict:
                 "promptVersion": PROMPT_VERSION,
                 "retrievalVersion": None,  # RAG bu surumde kullanilmiyor
                 "parserVersion": "pypdf+python-docx",
-                "privacyVersion": "tax-id-mask-only-1.0.0",
+                "privacyVersion": PRIVACY_VERSION,
                 "durationMs": duration_ms,
             },
             "warnings": warnings,
