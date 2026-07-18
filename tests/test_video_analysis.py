@@ -91,6 +91,10 @@ def _request(base_url: str, path: str, body: bytes, media_type: str = MP4) -> di
             "download": {"url": f"{base_url}{path}", "expiresAt": expires},
         }
     )
+    # Fixture'daki sabit deadlineAt zamanla gecmise duser (Berke review #5:
+    # deadline artik semantik kontrol ediliyor) -- testler her zaman calisan
+    # zamana gore GELECEK bir deadline kullanmali.
+    req["payload"]["deadlineAt"] = (datetime.now(timezone.utc) + timedelta(minutes=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return req
 
 
@@ -214,6 +218,19 @@ def test_low_confidence_damage_is_filtered_out(base_url: str, monkeypatch: pytes
 
 
 # --- Hata yollari ---
+
+def test_past_deadline_is_rejected_before_download(base_url: str) -> None:
+    """Berke review #5: suresi gecmis deadline pahali indirme/Roboflow
+    cagrisindan ONCE reddedilmeli. `/does-not-exist` gercekten fetch edilseydi
+    farkli bir (deadline-disi) hata koduyla basarisiz olurdu -- INVALID_DEADLINE
+    almamiz checkpoint'in indirmeden ONCE tetiklendigini kanitlar.
+    """
+    request = _request(base_url, "/does-not-exist", b"unused")
+    request["payload"]["deadlineAt"] = "2000-01-01T00:00:00Z"
+    with pytest.raises(PipelineFailure) as exc:
+        run(request)
+    assert exc.value.code is ErrorCode.INVALID_DEADLINE
+
 
 def test_hash_mismatch_fails_before_analysis(base_url: str) -> None:
     request = _request(base_url, "/mp4", _MP4_BYTES)
