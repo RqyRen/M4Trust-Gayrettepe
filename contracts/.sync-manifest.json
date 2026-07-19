@@ -1,5 +1,5 @@
 {
-  "syncedAt": "2026-07-18T13:18:09Z",
+  "syncedAt": "2026-07-19T08:01:19Z",
   "sourceRepo": "m4trust-spring-front-prod",
   "sourceCommit": "0dcddf01d9a40ffa6a9baaa580741ba9e9b1ca9a",
   "files": {
@@ -9,7 +9,7 @@
     "examples/document-extraction/minimum-request.json": "26de5ddda7bee1615cb28d073565bc469740ba41add99cbca064c28b65fada3f",
     "examples/document-extraction/non-retryable-failure.json": "7dc90534de66d6155fd3e7930bd4f6d306a9f531b3b38acec6ac080884c14cc4",
     "examples/document-extraction/retryable-failure.json": "1e1a016676235c46562dccd58839b6fe7209534b6059b2c8e33dff8e67b079e3",
-    "examples/document-extraction/success-result.json": "ad37fd5918ed6ae8d99f69c57f029833cc215268576f5e486d4313417372520d",
+    "examples/document-extraction/success-result.json": "0016e79f62dd79bb35b5a001d9ca0f43943a8d022ad7f9bd2ab4e4d0809763bf",
     "examples/document-extraction/warning-result.json": "5ab399c5809d189bae7eadf3482bfd8a0a17cdc379cbdc8190a125d42d293934",
     "examples/job/cancel-request.json": "5ac60df2a9ea06355c39335d1b8cdf923127df26167c21d1e91231d826bffa7b",
     "examples/video-analysis/full-request.json": "6d8ea8a70ee8ba3e7bad748c5bf11726f041933c3b8ca9a6c2b0db208824551e",
@@ -33,7 +33,7 @@
     "schemas/document-extraction/failed-event-1.0.0.schema.json": "cfad1d9b63da914f3f044c52a448a7fa93ffdbbb4f0aa118e1a2900dfdb61dc4",
     "schemas/document-extraction/request-payload-1.0.0.schema.json": "9349db273e979f3d0b51543a9c8401d1f3d2ad3d979475516413e04314da7cb5",
     "schemas/document-extraction/requested-event-1.0.0.schema.json": "5696c6e6d90146c0b9827a046682a203c06f3ef3774d033fb537990f6d3e1fe9",
-    "schemas/document-extraction/result-payload-1.0.0.schema.json": "c438d8583fb0aa7685ec29912276b1b8283e8fd33fce501185483d5f15a758d3",
+    "schemas/document-extraction/result-payload-1.0.0.schema.json": "87fd9b645c98f36ca0da54d6acc47865dbc6b5f81fd31ca80335ec8deff7b1f1",
     "schemas/job/cancel-request-payload-1.0.0.schema.json": "00c77f3d95f2cc162ae3e83dd32c771f84a4a227c031df6ab58f223dd0a59adf",
     "schemas/job/cancel-requested-event-1.0.0.schema.json": "421e2b8388b0207e0eb2a795ed1f8b2ba5540cfeaee85edd7e0fa81e29c9b3b3",
     "schemas/video-analysis/completed-event-1.0.0.schema.json": "6d715f618c45dd0fb4d1a77d3bd851666a08568a146b0d1ef1d52963df24155b",

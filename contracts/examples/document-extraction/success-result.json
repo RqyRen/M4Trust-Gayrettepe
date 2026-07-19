@@ -45,7 +45,8 @@
           "description": "The stated contract value is 1,250,000 EUR.",
           "structuredValue": {"type": "MONEY", "amountMinor": 125000000, "currency": "EUR"},
           "confidence": 0.96,
-          "sourceReferences": [{"page": 3, "startOffset": 42, "endOffset": 82}]
+          "sourceReferences": [{"page": 3, "startOffset": 42, "endOffset": 82}],
+          "legalBasis": {"source": "tbk-6098", "maddeNo": "83"}
         },
         {
           "ruleReference": "rule-delivery-1",
