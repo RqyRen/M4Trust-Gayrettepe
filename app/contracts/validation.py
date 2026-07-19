@@ -9,10 +9,24 @@ from app.config import get_settings
 from app.contracts.envelope import EventEnvelope
 from app.contracts.errors import ContractViolation, ErrorCode
 from app.contracts.schema_store import validator_for_id
+from app.messaging.topology import RK_DOC_REQUESTED, RK_VIDEO_REQUESTED
 
 # Desteklenen command event türleri (ADR-002 §4).
 _REQUESTED = "ai.job.requested.v1"
 _CANCEL_REQUESTED = "ai.job.cancel.requested.v1"
+
+# Berke review #11: JSON Schema yalniz sekli dogrular, alanlar arasi tutarlilik
+# (cross-field) runtime'da ayrica kontrol edilmeli. Asagidakiler ADR-002/ADR-007'de
+# tanimli, gercekten ihlal edilebilecek tutarliliklardir -- listenin geri kalani
+# (attemptNumber<=maxAttempts: tamamen internal, Spring'den hic gelmiyor; source
+# reference offset tutarliligi: offset alanlari opsiyonel ve hic uretilmiyor;
+# video time range: kendi urettigimiz cikti, yapisal olarak garanti) bu sistemde
+# uygulanabilir degil.
+_EXPECTED_PRODUCER_SERVICE = "m4trust-core-api"
+_REQUEST_ROUTING_KEY_FOR_JOB_TYPE = {
+    "DOCUMENT_EXTRACTION": RK_DOC_REQUESTED,
+    "VIDEO_ANALYSIS": RK_VIDEO_REQUESTED,
+}
 
 # (eventType, jobType) -> concrete schema $id (ADR-002 §22 deterministik konvansiyon).
 _SCHEMA_IDS: dict[tuple[str, str | None], str] = {
@@ -98,3 +112,35 @@ def validate_command(raw: dict) -> EventEnvelope:
         raise ContractViolation(ErrorCode.MISSING_REQUIRED_FIELD, f"schema validation failed: {detail}")
 
     return EventEnvelope.model_validate(raw)
+
+
+def validate_semantic_consistency(request: dict, *, routing_key: str) -> None:
+    """`ai.job.requested.v1` icin sekil-otesi (cross-field) tutarlilik kontrolleri.
+
+    validate_command() JSON Schema acisindan gecerli ama tutarsiz bir mesaji
+    (ornegin document-extraction routing key'inden gelmis ama jobType'i
+    VIDEO_ANALYSIS diyen bir mesaji) engellemez. Bu fonksiyon o bosluklari
+    kapatir; hepsi ContractViolation firlatir (business rejection degil).
+    """
+    producer_service = request["producer"]["service"]
+    if producer_service != _EXPECTED_PRODUCER_SERVICE:
+        raise ContractViolation(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            f"unexpected producer.service: {producer_service!r}",
+        )
+
+    job_type = request["jobType"]
+    expected_routing_key = _REQUEST_ROUTING_KEY_FOR_JOB_TYPE.get(job_type)
+    if expected_routing_key is not None and routing_key != expected_routing_key:
+        raise ContractViolation(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            f"routing key {routing_key!r} does not match jobType {job_type!r}",
+        )
+
+    input_payload = request.get("payload", {}).get("input", {})
+    input_id = input_payload.get("documentId") or input_payload.get("videoId")
+    if input_id is not None and request["subjectId"] != input_id:
+        raise ContractViolation(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            "subjectId does not match payload.input document/video identifier",
+        )

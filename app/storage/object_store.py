@@ -155,6 +155,7 @@ def fetch_source(source_input: dict, *, max_bytes: int | None = None) -> Iterato
 
     download = source_input["download"]
     expected_sha256 = source_input["sha256"].lower()
+    expected_size = source_input["sizeBytes"]
     _ensure_not_expired(download["expiresAt"])
 
     handle, temp_name = tempfile.mkstemp(prefix="m4trust-src-")
@@ -163,6 +164,19 @@ def fetch_source(source_input: dict, *, max_bytes: int | None = None) -> Iterato
 
     try:
         actual_sha256, size = _download_to(temp_path, download["url"], max_bytes=limit)
+
+        # Berke review #11: input.sizeBytes hic dogrulanmiyordu. SHA-256 zaten
+        # tam icerik esitligini garanti eder (boyut da dolayli dogrulanir), ama
+        # ayri bir kontrol daha net bir tanisal sinyal verir -- "boyut tutmuyor"
+        # ile "hash tutmuyor" ayni ErrorCode'u (CONTENT_HASH_MISMATCH) paylasir,
+        # sadece details.reason farklidir (yeni bir contract error code'u
+        # gerektirmemek icin bilincli tercih).
+        if size != expected_size:
+            raise PipelineFailure(
+                ErrorCode.CONTENT_HASH_MISMATCH,
+                "downloaded content size does not match the declared sizeBytes",
+                details={"field": "input.sizeBytes", "reason": "size mismatch"},
+            )
 
         if actual_sha256 != expected_sha256:
             # Hash uyusmazligi retry EDILMEZ (ADR-002 §7.1).

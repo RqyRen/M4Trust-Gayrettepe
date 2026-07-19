@@ -105,6 +105,19 @@ def test_hash_mismatch_is_non_retryable(base_url: str) -> None:
     assert exc.value.category.value == "NON_RETRYABLE_TECHNICAL"  # retry edilmez
 
 
+def test_declared_size_mismatch_is_rejected_before_hash_check(base_url: str) -> None:
+    """Berke review #11: input.sizeBytes hic dogrulanmiyordu. Icerik/hash aslinda
+    dogru olsa bile (asagida /ok, gercek hash ile), declared sizeBytes yanlissa
+    reddedilmeli -- ayri, daha net bir tanisal sinyal (details.reason)."""
+    bad_input = _input(f"{base_url}/ok")
+    bad_input["sizeBytes"] = len(_CONTENT) + 1
+    with pytest.raises(PipelineFailure) as exc:
+        with fetch_source(bad_input) as _:
+            pass
+    assert exc.value.code is ErrorCode.CONTENT_HASH_MISMATCH
+    assert exc.value.details["reason"] == "size mismatch"
+
+
 def test_temp_file_removed_even_on_failure(base_url: str) -> None:
     before = set(Path(__import__("tempfile").gettempdir()).glob("m4trust-src-*"))
     with pytest.raises(PipelineFailure):
