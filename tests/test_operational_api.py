@@ -39,6 +39,26 @@ def test_capabilities_has_service_identity_and_job_types() -> None:
     for c in body["capabilities"]:
         assert c["requestSchemaVersions"] == ["1.0.0"]
         assert c["resultSchemaVersions"] == ["1.0.0"]
+        assert "features" in c
+
+
+def test_document_extraction_capabilities_disclose_actual_implementation_scope() -> None:
+    """Berke review #10: capabilities RAG'in artik calistigini, text normalization/genel
+    PII maskelemenin hala calismadigini acikca belirtmeli (17 Temmuz'da bu tersti)."""
+    response = client.get("/internal/v1/capabilities")
+    doc_extraction = next(c for c in response.json()["capabilities"] if c["jobType"] == "DOCUMENT_EXTRACTION")
+    features = doc_extraction["features"]
+    assert features["textNormalization"] is False
+    assert features["retrievalProfiles"] == ["M4TRUST_LEGAL_DEFAULT"]
+    assert "legalGrounding" in features
+    assert "piiMasking" in features
+
+
+def test_video_analysis_capabilities_lists_implemented_features() -> None:
+    response = client.get("/internal/v1/capabilities")
+    video = next(c for c in response.json()["capabilities"] if c["jobType"] == "VIDEO_ANALYSIS")
+    assert video["features"]["objectCounting"] is True
+    assert video["features"]["damageDetection"] is True
 
 
 def test_contracts_returns_bare_array_not_wrapped_object() -> None:
