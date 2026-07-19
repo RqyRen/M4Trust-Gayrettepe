@@ -1,0 +1,4 @@
+# Ana .venv'e ek olarak bu ikisi gerekiyor (production requirements.txt'e eklenmedi -- bu
+# tamamen local bir dev/test araci, deploy edilen servisin bir parcasi degil).
+boto3==1.43.51
+python-multipart==0.0.32

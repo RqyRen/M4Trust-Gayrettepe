@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "test-console",
+      "runtimeExecutable": ".venv/Scripts/python.exe",
+      "runtimeArgs": ["tools/test-console/app.py"],
+      "port": 8080
+    }
+  ]
+}
