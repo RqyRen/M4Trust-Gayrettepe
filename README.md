@@ -3,7 +3,7 @@
 M4Trust platformunun **AI capability servisi**. Bu repo Spring Boot Core Platform'dan (Berke) ayrı geliştirilir ve
 ayrı deploy edilir. İki servis arasında **kod değil, contract paylaşılır** (bkz. `contracts/`).
 
-> Mimari otorite: `m4trust-spring-front-prod` reposundaki ADR-001 … ADR-007. Bu servis o kararlara tabidir.
+> Mimari otorite: `m4trust-spring-front-prod` reposundaki ADR-001 … ADR-009. Bu servis o kararlara tabidir.
 
 ## Sorumluluk sınırı (ADR-001, ADR-002)
 

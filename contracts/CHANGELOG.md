@@ -2,7 +2,42 @@
 
 ## Unreleased
 
-- Added an optional `rules[].legalBasis` (`source` closed enum, `articleNo`) to the document-extraction result payload: an advisory Turkish legislation reference (Legal RAG) used during rule classification, omitted when retrieval was unavailable or found no sufficiently relevant match.
+- Added the optional advisory `legalBasis` object (`source` closed enum of Turkish
+  legislation identifiers + `articleNo`) to document-extraction `result.rules[]`
+  items. Backward-compatible additive change within schema 1.0.0 (ADR-002 §15.3);
+  the field may be omitted entirely when legal retrieval is unavailable, carries
+  no article text, and must never drive Spring business decisions.
+
+- Added the Slice 6 public Deal document contract: JSON upload intents for direct
+  private-storage PUTs, idempotent verified finalize, retained document history,
+  short-lived direct download links, and no Spring binary upload proxy.
+- Added PDF/DOCX, client SHA-256 and size declarations, pending-upload expiry,
+  independently verified available metadata, and opaque immutable object-version
+  references for pinned download and later AI access.
+- Extended Deal detail with nullable backend-owned currentDocument and actor-aware
+  document actions; participants can read/download while initiator-only upload and
+  finalize authority remains projection-derived and re-authorized server-side.
+- Added stable terminal-state, expiry, verification-mismatch, idempotency-reuse,
+  and non-disclosing document Problem Details outcomes plus focused OpenAPI checks.
+- Added the Slice 5 atomic Deal parties operation with required `expectedVersion`,
+  nullable buyer/seller assignments, participant-bound validation, and stable
+  stale-version, state-conflict, and semantic-validation errors.
+- Added buyer/seller detail projections, participant `partyRoles`, and the
+  actor-aware `canManageParties` action projection without exposing activation
+  or ratification operations.
+- Extended exact OpenAPI validation for the Slice 5 parties path, request and
+  response schemas, DRAFT-only semantics, participant constraints, and the
+  explicit absence of an activate endpoint.
+- Added the Slice 4 public Deal invitation contract: initiator-scoped create/list/revoke,
+  user-scoped incoming/accept/reject, UUID Idempotency-Key create semantics, expectedVersion
+  terminal actions, and non-disclosing invitation errors.
+- Added actor-aware Deal and invitation action projections, participant-only Deal detail
+  projection, and separate initiator/recipient invitation DTOs: the recipient preview is
+  limited to Deal id/reference/title and the inviting entity's official legal name, while
+  pending recipient email is never disclosed to ordinary participants.
+- Extended exact OpenAPI validation for all Slice 4 invitation paths, security/context
+  boundaries, request and response schemas, stable error components, idempotency header,
+  participant semantics, and recipient-email disclosure boundary.
 - Aligned the video-analysis `result` object with the documented extensible transport-boundary policy (`additionalProperties: true`; symmetric with document-extraction) and added the corresponding future-optional result-metadata validator check.
 - Corrected the service name in the ADR-002 §21.3 capabilities example to the canonical `m4trust-ai-service` (documentation only; no wire change).
 - Added the Slice 3 legal-entity-scoped Deal create, paginated list, detail, editable-basic-field update, and cancel public API design.
