@@ -17,6 +17,36 @@ _CONTRACTS_DIR = Path(__file__).resolve().parent.parent / "contracts"
 # Desteklenen public job turleri (ADR-002 §3).
 _JOB_TYPES = ("DOCUMENT_EXTRACTION", "VIDEO_ANALYSIS")
 
+# Berke review #10 (17 Temmuz 2026): capabilities endpoint'i hangi processing
+# adimlarinin GERCEKTEN calistigini belirtmiyordu -- ornegin retrievalProfile
+# request'te kabul ediliyordu ama RAG hic calismiyordu (bu artik dogru degil,
+# PR #31/#32 ile RAG/legalBasis gercekten calisiyor). `features` alani
+# additionalProperties: true kapsaminda (contracts/openapi/ai-internal-v1.yaml)
+# -- schema degisikligi/Berke onayi gerektirmeyen, saf additive bir alan.
+_DOCUMENT_EXTRACTION_FEATURES = {
+    "privacyProfiles": ["DEFAULT"],
+    "piiMasking": (
+        "Structured PII (tax identifier, national ID, IBAN, email, phone) is masked before "
+        "the LLM call. Free-text/general PII such as person names is NOT detected or masked."
+    ),
+    "textNormalization": False,
+    "retrievalProfiles": ["M4TRUST_LEGAL_DEFAULT"],
+    "legalGrounding": (
+        "Retrieves relevant Turkish legislation articles (Turkish Code of Obligations, KVKK, "
+        "Payment Services Law 6493 plus its implementing regulation/communique, AML Law 5549) "
+        "as advisory context during rule classification. Individual rules may include an "
+        "optional legalBasis reference; absent when retrieval found no sufficiently relevant match."
+    ),
+}
+_VIDEO_ANALYSIS_FEATURES = {
+    "objectCounting": True,
+    "damageDetection": True,
+}
+_FEATURES_BY_JOB_TYPE = {
+    "DOCUMENT_EXTRACTION": _DOCUMENT_EXTRACTION_FEATURES,
+    "VIDEO_ANALYSIS": _VIDEO_ANALYSIS_FEATURES,
+}
+
 # Public contract adi -> schema dosyasi (ADR-002 §21.4, §22).
 _CONTRACT_FILES: dict[str, Path] = {
     "m4trust.document-extraction-request": _CONTRACTS_DIR
@@ -41,6 +71,7 @@ def build_capabilities(settings: Settings) -> dict:
                 "jobType": job_type,
                 "requestSchemaVersions": versions,
                 "resultSchemaVersions": versions,
+                "features": _FEATURES_BY_JOB_TYPE[job_type],
             }
             for job_type in _JOB_TYPES
         ],
