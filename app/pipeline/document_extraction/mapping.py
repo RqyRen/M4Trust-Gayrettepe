@@ -19,6 +19,13 @@ from app.pipeline.document_extraction import legal_rag
 _LEGAL_BASIS_MIN_SCORE = 0.55  # gercek veriyle kalibre edildi: ilgili kurallar 0.62-0.73, hukuki
 # kelime hazinesi tasiyan ama alakasiz metin 0.535 skorluyor -- bu esik onu eler.
 
+# Semadaki (result-payload-1.0.0.schema.json) legalBasis.source kapali enum'uyla
+# birebir ayni olmali -- legal_corpus/raw/*.md dosya adlarindan turetiliyor.
+_LEGAL_BASIS_SOURCES = {
+    "tbk-6098", "kvkk-6698", "odeme-hizmetleri-6493", "aml-5549",
+    "odeme-hizmetleri-yonetmelik", "odeme-hizmetleri-tebligi",
+}
+
 
 def _clamp_confidence(value) -> float:
     try:
@@ -186,7 +193,9 @@ def _legal_basis_for_rule(title: str, description: str) -> dict | None:
     top = results[0]
     if top["score"] < _LEGAL_BASIS_MIN_SCORE or "madde_no" not in top:
         return None
-    return {"source": top["source"], "maddeNo": top["madde_no"]}
+    if top["source"] not in _LEGAL_BASIS_SOURCES:
+        return None
+    return {"source": top["source"], "articleNo": top["madde_no"]}
 
 
 def _map_rule(item: dict, index: int, warnings: list[dict]) -> dict:

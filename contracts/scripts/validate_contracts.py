@@ -275,6 +275,18 @@ def validate() -> int:
     strict_value["payload"]["result"]["rules"][0]["structuredValue"]["futureField"] = "must be rejected"
     expect_invalid("unknown property in closed structured-value variant", document_completed_path, strict_value, store, failures)
 
+    legal_basis_unknown_property = copy.deepcopy(completed)
+    legal_basis_unknown_property["payload"]["result"]["rules"][0]["legalBasis"]["excerpt"] = "must be rejected"
+    expect_invalid("unknown property in closed legalBasis object", document_completed_path, legal_basis_unknown_property, store, failures)
+
+    legal_basis_invalid_source = copy.deepcopy(completed)
+    legal_basis_invalid_source["payload"]["result"]["rules"][0]["legalBasis"]["source"] = "not-a-real-source"
+    expect_invalid("legalBasis.source outside closed enum", document_completed_path, legal_basis_invalid_source, store, failures)
+
+    legal_basis_missing_article = copy.deepcopy(completed)
+    del legal_basis_missing_article["payload"]["result"]["rules"][0]["legalBasis"]["articleNo"]
+    expect_invalid("legalBasis missing required articleNo", document_completed_path, legal_basis_missing_article, store, failures)
+
     if find_duplicate_ids([Path("one.json"), Path("two.json")], {Path("one.json"): {"$id": "duplicate"}, Path("two.json"): {"$id": "duplicate"}}):
         print("PASS duplicate schema ID detector negative case")
     else:

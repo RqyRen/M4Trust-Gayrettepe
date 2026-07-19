@@ -315,7 +315,7 @@ def test_map_rule_attaches_legal_basis_for_a_confident_match(monkeypatch: pytest
         0,
         warnings=[],
     )
-    assert rule["legalBasis"] == {"source": "tbk-6098", "maddeNo": "179"}
+    assert rule["legalBasis"] == {"source": "tbk-6098", "articleNo": "179"}
 
 
 def test_map_rule_omits_legal_basis_below_score_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -326,6 +326,19 @@ def test_map_rule_omits_legal_basis_below_score_threshold(monkeypatch: pytest.Mo
     )
     rule = mapping_module._map_rule(
         {"category": "OTHER", "title": "Alakasiz madde", "description": "...", "confidence": 0.5}, 0, warnings=[]
+    )
+    assert "legalBasis" not in rule
+
+
+def test_map_rule_omits_legal_basis_for_unknown_source(monkeypatch: pytest.MonkeyPatch) -> None:
+    """legalBasis.source semada kapali bir enum -- kulliyat disi bir kaynak asla ciktiya sizmamali."""
+    monkeypatch.setattr(
+        mapping_module.legal_rag,
+        "retrieve",
+        lambda query, top_k=1: [{"source": "unexpected-source", "madde_no": "1", "score": 0.9, "text": "..."}],
+    )
+    rule = mapping_module._map_rule(
+        {"category": "OTHER", "title": "Test", "description": "...", "confidence": 0.5}, 0, warnings=[]
     )
     assert "legalBasis" not in rule
 

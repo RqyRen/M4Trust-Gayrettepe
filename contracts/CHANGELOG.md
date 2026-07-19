@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added an optional `rules[].legalBasis` (`source` closed enum, `articleNo`) to the document-extraction result payload: an advisory Turkish legislation reference (Legal RAG) used during rule classification, omitted when retrieval was unavailable or found no sufficiently relevant match.
 - Aligned the video-analysis `result` object with the documented extensible transport-boundary policy (`additionalProperties: true`; symmetric with document-extraction) and added the corresponding future-optional result-metadata validator check.
 - Corrected the service name in the ADR-002 §21.3 capabilities example to the canonical `m4trust-ai-service` (documentation only; no wire change).
 - Added the Slice 3 legal-entity-scoped Deal create, paginated list, detail, editable-basic-field update, and cancel public API design.

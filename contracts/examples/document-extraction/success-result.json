@@ -46,7 +46,7 @@
           "structuredValue": {"type": "MONEY", "amountMinor": 125000000, "currency": "EUR"},
           "confidence": 0.96,
           "sourceReferences": [{"page": 3, "startOffset": 42, "endOffset": 82}],
-          "legalBasis": {"source": "tbk-6098", "maddeNo": "83"}
+          "legalBasis": {"source": "tbk-6098", "articleNo": "83"}
         },
         {
           "ruleReference": "rule-delivery-1",
