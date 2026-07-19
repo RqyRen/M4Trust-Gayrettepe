@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 from typing import Callable, TypeVar
 
+from app.common import metrics
 from app.contracts.errors import PipelineFailure, retry_recommended_for
 
 T = TypeVar("T")
@@ -56,6 +57,7 @@ def run_with_retry(
             # Non-retryable veya son deneme -> terminal.
             if not retry_recommended_for(failure.code) or attempt == policy.max_attempts:
                 raise
+            metrics.increment("provider_retry_count")
             sleeper(backoff_delay(attempt, policy, rand))
 
     assert last_failure is not None  # pragma: no cover - donguden cikilamaz

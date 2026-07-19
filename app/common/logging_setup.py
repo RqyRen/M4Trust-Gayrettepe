@@ -30,6 +30,9 @@ _CONTEXT_FIELDS = (
     "schemaVersion",
     "pipelineVersion",
     "attemptNumber",
+    # Berke review #12 (contract violation / operasyonel sayaclar, app/common/metrics.py):
+    "metric",
+    "metricValue",
 )
 
 
