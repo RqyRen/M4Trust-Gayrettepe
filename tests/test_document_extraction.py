@@ -26,6 +26,7 @@ from app.config import Settings
 from app.contracts.errors import ContractViolation, ErrorCode, PipelineFailure
 from app.contracts.validation import validate_outgoing
 from app.pipeline.document_extraction import llm as llm_module
+from app.pipeline.document_extraction import mapping as mapping_module
 from app.pipeline.document_extraction.media import DOCX, PDF, detect_media_type
 from app.pipeline.document_extraction.pipeline import run
 from app.pipeline.registry import pipeline_for
@@ -301,6 +302,46 @@ def test_legal_rag_retrieval_failure_does_not_break_extraction(monkeypatch: pyte
     assert result == _CANNED_LLM_OUTPUT
     # Legal context sistem mesaji hic eklenmemis olmali -- sadece SYSTEM_PROMPT + user mesaji.
     assert len(captured_kwargs["messages"]) == 2
+
+
+def test_map_rule_attaches_legal_basis_for_a_confident_match(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        mapping_module.legal_rag,
+        "retrieve",
+        lambda query, top_k=1: [{"source": "tbk-6098", "madde_no": "179", "score": 0.71, "text": "..."}],
+    )
+    rule = mapping_module._map_rule(
+        {"category": "PENALTY", "title": "Gecikme cezasi", "description": "Gunluk binde bir gecikme cezasi.", "confidence": 0.9},
+        0,
+        warnings=[],
+    )
+    assert rule["legalBasis"] == {"source": "tbk-6098", "maddeNo": "179"}
+
+
+def test_map_rule_omits_legal_basis_below_score_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        mapping_module.legal_rag,
+        "retrieve",
+        lambda query, top_k=1: [{"source": "tbk-6098", "madde_no": "1", "score": 0.1, "text": "..."}],
+    )
+    rule = mapping_module._map_rule(
+        {"category": "OTHER", "title": "Alakasiz madde", "description": "...", "confidence": 0.5}, 0, warnings=[]
+    )
+    assert "legalBasis" not in rule
+
+
+def test_map_rule_omits_legal_basis_when_retrieval_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """legal_rag cokse bile (embedding yok, model yuklenemedi vb.) rule basariyla eslenmeli."""
+
+    def _broken_retrieve(*args, **kwargs):
+        raise FileNotFoundError("legal corpus embeddings not built")
+
+    monkeypatch.setattr(mapping_module.legal_rag, "retrieve", _broken_retrieve)
+    rule = mapping_module._map_rule(
+        {"category": "PAYMENT", "title": "Odeme", "description": "30 gun icinde odeme.", "confidence": 0.8}, 0, warnings=[]
+    )
+    assert "legalBasis" not in rule
+    assert rule["category"] == "PAYMENT"
 
 
 def _fake_openai_client(*, choices: list):

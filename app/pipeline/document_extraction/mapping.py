@@ -14,6 +14,11 @@ from __future__ import annotations
 import re
 from datetime import date
 
+from app.pipeline.document_extraction import legal_rag
+
+_LEGAL_BASIS_MIN_SCORE = 0.55  # gercek veriyle kalibre edildi: ilgili kurallar 0.62-0.73, hukuki
+# kelime hazinesi tasiyan ama alakasiz metin 0.535 skorluyor -- bu esik onu eler.
+
 
 def _clamp_confidence(value) -> float:
     try:
@@ -160,19 +165,49 @@ def _map_structured_value(item: dict, warnings: list[dict]) -> dict:
     return {"type": "TEXT", "value": str(item.get("description") or item.get("title") or "")}
 
 
+def _legal_basis_for_rule(title: str, description: str) -> dict | None:
+    """Kural metnine (title+description) en ilgili kanun maddesini bulur.
+
+    Legal RAG bir izlenebilirlik artiricidir, mapping'in onkosulu degildir:
+    retrieval basarisiz olursa (embedding yoksa, model yuklenemezse) ya da
+    yeterince ilgili bir madde bulunamazsa (skor esigin altinda, veya madde
+    numarasi olmayan bir baslik-bazli chunk) None doner -- rule yine de
+    basariyla eslenir, sadece legalBasis alani hic eklenmez.
+    """
+    query = f"{title} {description}".strip()
+    if not query:
+        return None
+    try:
+        results = legal_rag.retrieve(query, top_k=1)
+    except Exception:
+        return None
+    if not results:
+        return None
+    top = results[0]
+    if top["score"] < _LEGAL_BASIS_MIN_SCORE or "madde_no" not in top:
+        return None
+    return {"source": top["source"], "maddeNo": top["madde_no"]}
+
+
 def _map_rule(item: dict, index: int, warnings: list[dict]) -> dict:
     category = item.get("category") if item.get("category") in {
         "PAYMENT", "DELIVERY", "QUALITY", "PENALTY", "TERMINATION", "DISPUTE", "OTHER", "UNKNOWN"
     } else "UNKNOWN"
-    return {
+    title = (item.get("title") or "Untitled rule").strip() or "Untitled rule"
+    description = (item.get("description") or "").strip() or "No description extracted."
+    rule = {
         "ruleReference": f"rule-{index + 1}",
         "category": category,
-        "title": (item.get("title") or "Untitled rule").strip() or "Untitled rule",
-        "description": (item.get("description") or "").strip() or "No description extracted.",
+        "title": title,
+        "description": description,
         "structuredValue": _map_structured_value(item, warnings),
         "confidence": _clamp_confidence(item.get("confidence")),
         "sourceReferences": _source_references(item.get("page")),
     }
+    legal_basis = _legal_basis_for_rule(title, description)
+    if legal_basis is not None:
+        rule["legalBasis"] = legal_basis
+    return rule
 
 
 def _map_delivery_requirement(item: dict, index: int) -> dict:

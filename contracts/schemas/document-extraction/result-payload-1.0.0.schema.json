@@ -67,7 +67,17 @@
       "required": ["value", "masked", "confidence"]
     },
     "sourceReferences": {"type": "array", "items": {"$ref": "https://schemas.m4trust.internal/ai/common/source-reference/1.0.0"}},
-    "warning": {"$ref": "https://schemas.m4trust.internal/ai/common/warning/1.0.0"}
+    "warning": {"$ref": "https://schemas.m4trust.internal/ai/common/warning/1.0.0"},
+    "legalBasis": {
+      "description": "Optional Turkish statute/regulation article automatically retrieved (Legal RAG) as grounding for this rule's classification. Absent when retrieval found no sufficiently relevant match.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source": {"type": "string", "minLength": 1, "description": "Legal corpus source identifier, e.g. tbk-6098, kvkk-6698."},
+        "maddeNo": {"type": "string", "minLength": 1, "description": "Article number within the source, e.g. 179, 12/2-g."}
+      },
+      "required": ["source", "maddeNo"]
+    }
   },
   "properties": {
     "result": {
@@ -113,7 +123,8 @@
               "description": {"type": "string", "minLength": 1},
               "structuredValue": {"$ref": "#/$defs/structuredValue"},
               "confidence": {"$ref": "#/$defs/confidence"},
-              "sourceReferences": {"$ref": "#/$defs/sourceReferences"}
+              "sourceReferences": {"$ref": "#/$defs/sourceReferences"},
+              "legalBasis": {"$ref": "#/$defs/legalBasis"}
             },
             "required": ["ruleReference", "category", "title", "description", "structuredValue", "confidence", "sourceReferences"]
           }
