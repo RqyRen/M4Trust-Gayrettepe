@@ -18,13 +18,17 @@ from app.common.cancellation import JobCancelled
 from app.common.idempotency import JobStore, Resolution, ResolveResult, identity_of
 from app.contracts.errors import ErrorCode, PipelineFailure
 from app.messaging.publisher import PublishConfirmationFailed
+from app.messaging.topology import RK_DOC_REQUESTED
 
 _EXAMPLES = Path(__file__).resolve().parents[1] / "contracts" / "examples"
 
 
 class _FakeMethod:
     delivery_tag = 1
-    routing_key = "test"
+    # Berke review #11: worker artik routing key'i jobType ile karsilastiriyor
+    # (validate_semantic_consistency) -- fixture bu dosyada hep DOCUMENT_EXTRACTION
+    # oldugu icin gercek routing key'i kullanmali, keyfi bir string degil.
+    routing_key = RK_DOC_REQUESTED
 
 
 class _FakeCancellationStore:

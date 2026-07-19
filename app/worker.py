@@ -25,7 +25,7 @@ from app.common.logging_setup import configure_logging
 from app.common.retry import DEFAULT_POLICY, run_with_retry
 from app.config import get_settings
 from app.contracts.errors import ContractViolation, PipelineFailure
-from app.contracts.validation import validate_command, validate_outgoing
+from app.contracts.validation import validate_command, validate_outgoing, validate_semantic_consistency
 from app.messaging.consumer import start_consuming
 from app.messaging.publisher import PublishConfirmationFailed, publish_result
 from app.pipeline.failure import build_failed_event
@@ -103,6 +103,20 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         return
 
     request = envelope.model_dump()
+
+    # Berke review #11: sekil gecerli ama tutarsiz mesajlari (yanlis routing
+    # key'den gelmis, beklenmeyen bir producer, subjectId'nin belge/video
+    # ID'siyle uyusmamasi) burada yakala.
+    try:
+        validate_semantic_consistency(request, routing_key=method.routing_key)
+    except ContractViolation as exc:
+        logger.warning(
+            "semantic contract violation code=%s -> dead-letter",
+            exc.code.value,
+            extra={"jobId": raw.get("jobId")},
+        )
+        channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+        return
     identity = identity_of(request)
     resolved = _store.resolve(identity)
     log_context = {
