@@ -174,7 +174,7 @@ def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) ->
             "technicalMetadata": {
                 "pipelineVersion": PIPELINE_VERSION,
                 "modelProvider": "openai",
-                "modelFamily": "gpt-5.4",
+                "modelFamily": settings.openai_model,
                 "modelVersion": settings.openai_model,
                 "promptVersion": PROMPT_VERSION,
                 "retrievalVersion": None,  # RAG bu surumde kullanilmiyor
