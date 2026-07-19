@@ -1,15 +1,12 @@
 """M4Trust local test console.
 
-Gercek pipeline'lari (MinIO indirme, GPT-5.4, Roboflow) tarayicidan
+Gercek pipeline'lari (MinIO indirme, GPT-5.4/mini, Roboflow) tarayicidan
 tetikleyip sonucu gorsel olarak gostermek icin. Production servisinin bir
 parcasi DEGIL -- contracts/'a veya app/'a hicbir etkisi yok, sadece
 app.pipeline.* modullerini dogrudan, RabbitMQ'ya hic girmeden cagirir.
 
 Calistirma (repo kokunden):
-  .venv\\Scripts\\python.exe -m uvicorn tools.test-console.app:app --port 8080 --reload
-(tire iceren klasor adi Python modul importu icin gecersiz oldugundan asagida
-sys.path'e repo koku eklenip dogrudan `python tools/test-console/app.py` ile
-de calistirilabilir hale getirildi -- bkz. dosya sonu.)
+  .venv\\Scripts\\python.exe tools/test-console/app.py
 """
 from __future__ import annotations
 
@@ -45,6 +42,12 @@ app = FastAPI(title="M4Trust Test Console")
 _ENV = dotenv_values(REPO_ROOT / ".env")
 _BUCKET = "test-console-uploads"
 
+# Sunum gunu icin: her calistirmayi hafizada tutar (server process'i ayakta oldugu surece).
+# Internet/API kesintisinde bile onceki gercek sonuclari tekrar gosterebilmek icindir --
+# gercek API cagrisi gerektirmez, sadece daha once uretilmis HTML govdesini yeniden sunar.
+_HISTORY: list[dict] = []
+_HISTORY_BODIES: dict[str, str] = {}
+
 _PAGE_CSS = """
 <style>
   :root { color-scheme: light dark; }
@@ -67,6 +70,7 @@ _PAGE_CSS = """
   .badge.err { background: #7f1d1d; color: #fca5a5; }
   .badge.info { background: #1e3a5f; color: #93c5fd; }
   a.back { color: #8bd0ff; text-decoration: none; font-size: 0.9rem; }
+  a.navlink { color: #8bd0ff; text-decoration: none; font-size: 0.9rem; margin-right: 1rem; }
   img.result { max-width: 100%; border-radius: 8px; margin-top: 0.6rem; border: 1px solid #232a33; }
   pre { background: #05080b; padding: 0.8rem; border-radius: 6px; overflow-x: auto; font-size: 0.8rem; }
 </style>
@@ -74,8 +78,10 @@ _PAGE_CSS = """
 
 
 def _page(title: str, body: str) -> HTMLResponse:
+    nav = ("<p><a class='navlink' href='/'>🏠 Ana sayfa</a>"
+           "<a class='navlink' href='/history'>🕘 Geçmiş</a></p>")
     return HTMLResponse(f"<!doctype html><html><head><meta charset='utf-8'><title>{title}</title>{_PAGE_CSS}"
-                         f"</head><body><h1>M4Trust Test Console</h1>{body}</body></html>")
+                         f"</head><body><h1>M4Trust Test Console</h1>{nav}{body}</body></html>")
 
 
 def _minio_client():
@@ -183,16 +189,30 @@ def _build_video_request(data: bytes, filename: str, content_type: str | None) -
     return request
 
 
-def _render_error(exc: PipelineFailure) -> HTMLResponse:
-    body = f"""
+def _record_history(kind: str, filename: str, status: str, summary: str, body: str) -> str:
+    """Bir calistirmayi hafizadaki gecmise kaydeder, /history/<id> ile tekrar API cagrisi
+    yapmadan goruntulenebilir hale getirir (sunum sirasinda internet kesilse bile isler)."""
+    run_id = uuid.uuid4().hex[:10]
+    _HISTORY_BODIES[run_id] = body
+    _HISTORY.insert(0, {
+        "id": run_id,
+        "at": datetime.now().strftime("%H:%M:%S"),
+        "kind": kind,
+        "filename": filename,
+        "status": status,
+        "summary": summary,
+    })
+    return run_id
+
+
+def _error_body(exc: PipelineFailure) -> str:
+    return f"""
     <div class="card">
       <h2>❌ Pipeline hatası</h2>
       <p><span class="badge err">{exc.code.value}</span> <span class="badge info">{exc.category.value}</span></p>
       <p>{exc.message}</p>
       <pre>{exc.details or {}}</pre>
-      <p><a class="back" href="/">&larr; geri</a></p>
     </div>"""
-    return _page("Hata", body)
 
 
 def _format_structured_value(sv: dict) -> str:
@@ -214,10 +234,12 @@ def _format_structured_value(sv: dict) -> str:
     return str(sv)
 
 
-def _render_document_result(event: dict) -> HTMLResponse:
+def _document_result_body(event: dict) -> tuple[str, str]:
+    """(body_html, ozet_metni) dondurur -- ozet gecmis tablosunda kullanilir."""
     result = event["payload"]["result"]
     meta = event["payload"]["technicalMetadata"]
     warnings = event["payload"]["warnings"]
+    legal_count = sum(1 for r in result["rules"] if "legalBasis" in r)
 
     parties_rows = "".join(
         f"<tr><td>{p['role']}</td><td>{p['legalName']['value']}</td>"
@@ -249,7 +271,7 @@ def _render_document_result(event: dict) -> HTMLResponse:
     body = f"""
     <div class="card">
       <h2>✅ Doküman çıkarımı tamamlandı</h2>
-      <p><span class="badge info">model {meta['modelProvider']}</span>
+      <p><span class="badge info">model {meta['modelVersion']}</span>
          <span class="badge info">{meta['durationMs']} ms</span>
          <span class="badge info">{result['document']['detectedLanguage']}, {result['document']['pageCount']} sayfa,
          {result['document']['textExtractionMethod']}</span></p>
@@ -260,9 +282,9 @@ def _render_document_result(event: dict) -> HTMLResponse:
     {rule_cards}
     <h2>Uyarılar</h2>
     <div class="card"><table><tr><th>Önem</th><th>Kod</th><th>Mesaj</th></tr>{warning_rows}</table></div>
-    <p><a class="back" href="/">&larr; yeni test</a></p>
     """
-    return _page("Doküman sonucu", body)
+    summary = f"{len(result['parties'])} taraf, {len(result['rules'])} kural ({legal_count} legalBasis'li), {len(warnings)} uyarı, {meta['durationMs']}ms"
+    return body, summary
 
 
 def _draw_predictions(img: Image.Image, predictions: list[dict], color: str) -> None:
@@ -286,7 +308,7 @@ def _predictions_table(predictions: list[dict], empty_message: str) -> str:
     return f"<table><tr><th>Sınıf</th><th>Güven</th><th>Merkez (x,y)</th><th>Boyut (wxh)</th></tr>{rows}</table>"
 
 
-def _render_photo_result(image_b64: str, logistics: list[dict], damage: list[dict], settings) -> HTMLResponse:
+def _photo_result_body(image_b64: str, logistics: list[dict], damage: list[dict], settings) -> tuple[str, str]:
     body = f"""
     <div class="card">
       <h2>✅ Roboflow tespiti tamamlandı</h2>
@@ -298,15 +320,15 @@ def _render_photo_result(image_b64: str, logistics: list[dict], damage: list[dic
     <div class="card">{_predictions_table(logistics, "tespit yok")}</div>
     <h2>Hasar tespitleri ({len(damage)})</h2>
     <div class="card">{_predictions_table(damage, "tespit yok")}</div>
-    <p><a class="back" href="/">&larr; yeni test</a></p>
     """
-    return _page("Fotoğraf sonucu", body)
+    summary = f"{len(logistics)} lojistik tespiti, {len(damage)} hasar tespiti"
+    return body, summary
 
 
-def _render_video_result(event: dict) -> HTMLResponse:
+def _video_result_body(event: dict) -> tuple[str, str]:
     result = event["payload"]["result"]
     meta = event["payload"]["technicalMetadata"]
-    summary = result["summary"]
+    summary_obj = result["summary"]
 
     obs_rows = "".join(
         f"<tr><td>{o['type']}</td><td>{o['label']}</td><td>{o['observedValue']}</td>"
@@ -319,44 +341,57 @@ def _render_video_result(event: dict) -> HTMLResponse:
         for a in result["anomalies"]
     ) or "<tr><td colspan='4'><em>anomali yok</em></td></tr>"
 
-    outcome_badge = "ok" if summary["advisoryOutcome"] == "NO_ISSUE_DETECTED" else "warn"
+    outcome_badge = "ok" if summary_obj["advisoryOutcome"] == "NO_ISSUE_DETECTED" else "warn"
     body = f"""
     <div class="card">
       <h2>✅ Video analizi tamamlandı (tam pipeline)</h2>
-      <p><span class="badge {outcome_badge}">{summary['advisoryOutcome']}</span>
+      <p><span class="badge {outcome_badge}">{summary_obj['advisoryOutcome']}</span>
          <span class="badge info">{meta['durationMs']} ms</span>
          <span class="badge info">{result['durationMs']} ms video</span></p>
-      <p>Gözden geçirme nedenleri: {', '.join(summary['reviewReasons']) or '—'}</p>
+      <p>Gözden geçirme nedenleri: {', '.join(summary_obj['reviewReasons']) or '—'}</p>
     </div>
     <h2>Gözlemler</h2>
     <div class="card"><table><tr><th>Tip</th><th>Etiket</th><th>Değer</th><th>Güven</th><th>Zaman</th></tr>{obs_rows}</table></div>
     <h2>Anomaliler</h2>
     <div class="card"><table><tr><th>Tip</th><th>Önem</th><th>Güven</th><th>Açıklama</th></tr>{anomaly_rows}</table></div>
-    <p><a class="back" href="/">&larr; yeni test</a></p>
     """
-    return _page("Video sonucu", body)
+    summary = f"{summary_obj['advisoryOutcome']}, {len(result['observations'])} gözlem, {len(result['anomalies'])} anomali"
+    return body, summary
 
 
 _HOME_BODY = """
 <div class="card">
-  <p>Bu araç, gerçek pipeline'ları (GPT-5.4 / Roboflow) çağırır — her "çalıştır" tıklaması
-  gerçek, ücretli bir API çağrısı yapar.</p>
+  <p>Bu araç, gerçek pipeline'ları (GPT-5.4/mini / Roboflow) çağırır — her "çalıştır" tıklaması
+  gerçek, ücretli bir API çağrısı yapar. Geçmiş sonuçları tekrar API çağrısı yapmadan
+  <a class="navlink" href="/history">Geçmiş</a> sayfasından görebilirsin.</p>
 </div>
 
 <h2>1) Doküman çıkarımı (PDF/DOCX)</h2>
 <form class="card" action="/run/document" method="post" enctype="multipart/form-data">
-  <label>Sözleşme dosyası</label>
+  <label>Tek sözleşme dosyası</label>
   <input type="file" name="file" accept=".pdf,.docx" required>
-  <p class="warn">⚠️ gerçek GPT-5.4 çağrısı yapar</p>
+  <p class="warn">⚠️ gerçek GPT-5.4/mini çağrısı yapar</p>
   <button type="submit">Çalıştır</button>
+</form>
+<form class="card" action="/run/document/batch" method="post" enctype="multipart/form-data">
+  <label>Toplu test — birden fazla sözleşme seç</label>
+  <input type="file" name="files" accept=".pdf,.docx" multiple required>
+  <p class="warn">⚠️ her dosya için ayrı gerçek GPT-5.4/mini çağrısı yapar</p>
+  <button type="submit">Toplu çalıştır</button>
 </form>
 
 <h2>2) Video analizi — fotoğraf ile hızlı test</h2>
 <form class="card" action="/run/photo" method="post" enctype="multipart/form-data">
-  <label>Fotoğraf (JPG/PNG)</label>
+  <label>Tek fotoğraf (JPG/PNG)</label>
   <input type="file" name="file" accept=".jpg,.jpeg,.png" required>
   <p class="warn">⚠️ gerçek Roboflow çağrısı yapar (2 model), sonucu kutucuklarla görselleştirir</p>
   <button type="submit">Çalıştır</button>
+</form>
+<form class="card" action="/run/photo/batch" method="post" enctype="multipart/form-data">
+  <label>Toplu test — birden fazla fotoğraf seç</label>
+  <input type="file" name="files" accept=".jpg,.jpeg,.png" multiple required>
+  <p class="warn">⚠️ her fotoğraf için ayrı gerçek Roboflow çağrısı yapar (2 model)</p>
+  <button type="submit">Toplu çalıştır</button>
 </form>
 
 <h2>3) Video analizi — tam pipeline (gerçek video dosyası)</h2>
@@ -371,29 +406,106 @@ _HOME_BODY = """
 
 @app.get("/", response_class=HTMLResponse)
 def home() -> HTMLResponse:
-    return _page("M4Trust Test Console", _HOME_BODY)
+    recent = _HISTORY[:5]
+    recent_rows = "".join(
+        f"<tr><td>{h['at']}</td><td>{h['kind']}</td><td>{h['filename']}</td>"
+        f"<td><span class='badge {h['status']}'>{h['status']}</span></td><td>{h['summary']}</td>"
+        f"<td><a class='back' href='/history/{h['id']}'>gör</a></td></tr>"
+        for h in recent
+    )
+    recent_block = (
+        f"<h2>Son çalıştırmalar</h2><div class='card'><table><tr><th>Saat</th><th>Tür</th><th>Dosya</th>"
+        f"<th>Durum</th><th>Özet</th><th></th></tr>{recent_rows}</table></div>"
+        if recent else ""
+    )
+    return _page("M4Trust Test Console", _HOME_BODY + recent_block)
+
+
+@app.get("/history", response_class=HTMLResponse)
+def history() -> HTMLResponse:
+    rows = "".join(
+        f"<tr><td>{h['at']}</td><td>{h['kind']}</td><td>{h['filename']}</td>"
+        f"<td><span class='badge {h['status']}'>{h['status']}</span></td><td>{h['summary']}</td>"
+        f"<td><a class='back' href='/history/{h['id']}'>gör</a></td></tr>"
+        for h in _HISTORY
+    ) or "<tr><td colspan='6'><em>henüz bir şey çalıştırılmadı</em></td></tr>"
+    body = f"""
+    <div class="card"><p>Bu tablo, server ayakta kaldığı sürece hafızada tutulur (yeniden başlatınca
+    sıfırlanır). Bir satıra tıklamak yeni bir API çağrısı YAPMAZ, sadece o çalıştırmanın daha önce
+    üretilmiş sonucunu tekrar gösterir — sunum sırasında internet kesilse bile işe yarar.</p></div>
+    <div class="card"><table><tr><th>Saat</th><th>Tür</th><th>Dosya</th><th>Durum</th><th>Özet</th><th></th></tr>{rows}</table></div>
+    """
+    return _page("Geçmiş", body)
+
+
+@app.get("/history/{run_id}", response_class=HTMLResponse)
+def history_detail(run_id: str) -> HTMLResponse:
+    body = _HISTORY_BODIES.get(run_id)
+    if body is None:
+        return _page("Bulunamadı", "<div class='card'><p>Bu kayıt bulunamadı (server yeniden başlamış olabilir).</p></div>")
+    return _page("Geçmiş sonuç", body)
 
 
 @app.post("/run/document", response_class=HTMLResponse)
 def run_document(file: UploadFile = File(...)) -> HTMLResponse:
     data = file.file.read()
-    request = _build_document_request(data, file.filename or "upload.pdf", file.content_type)
+    filename = file.filename or "upload.pdf"
+    request = _build_document_request(data, filename, file.content_type)
     try:
         event = document_extraction_pipeline.run(request)
     except PipelineFailure as exc:
-        return _render_error(exc)
-    return _render_document_result(event)
+        body = _error_body(exc)
+        _record_history("doküman", filename, "err", exc.code.value, body)
+        return _page("Hata", body)
+    body, summary = _document_result_body(event)
+    _record_history("doküman", filename, "ok", summary, body)
+    return _page("Doküman sonucu", body)
+
+
+@app.post("/run/document/batch", response_class=HTMLResponse)
+def run_document_batch(files: list[UploadFile] = File(...)) -> HTMLResponse:
+    rows = []
+    for f in files:
+        data = f.file.read()
+        filename = f.filename or "upload.pdf"
+        request = _build_document_request(data, filename, f.content_type)
+        try:
+            event = document_extraction_pipeline.run(request)
+        except PipelineFailure as exc:
+            body = _error_body(exc)
+            run_id = _record_history("doküman", filename, "err", exc.code.value, body)
+            rows.append((filename, "err", exc.code.value, run_id))
+            continue
+        body, summary = _document_result_body(event)
+        run_id = _record_history("doküman", filename, "ok", summary, body)
+        rows.append((filename, "ok", summary, run_id))
+
+    table_rows = "".join(
+        f"<tr><td>{name}</td><td><span class='badge {status}'>{status}</span></td>"
+        f"<td>{summary}</td><td><a class='back' href='/history/{run_id}'>detay</a></td></tr>"
+        for name, status, summary, run_id in rows
+    )
+    ok_count = sum(1 for _, s, _, _ in rows if s == "ok")
+    body = f"""
+    <div class="card"><h2>Toplu doküman çıkarımı tamamlandı</h2>
+    <p>{ok_count}/{len(rows)} başarılı</p></div>
+    <div class="card"><table><tr><th>Dosya</th><th>Durum</th><th>Özet</th><th></th></tr>{table_rows}</table></div>
+    """
+    return _page("Toplu doküman sonucu", body)
 
 
 @app.post("/run/photo", response_class=HTMLResponse)
 def run_photo(file: UploadFile = File(...)) -> HTMLResponse:
     data = file.file.read()
+    filename = file.filename or "upload.jpg"
     settings = get_settings()
     try:
         logistics = roboflow_client.detect_objects(data, settings)
         damage = roboflow_client.detect_damage(data, settings)
     except PipelineFailure as exc:
-        return _render_error(exc)
+        body = _error_body(exc)
+        _record_history("foto", filename, "err", exc.code.value, body)
+        return _page("Hata", body)
 
     img = Image.open(io.BytesIO(data)).convert("RGB")
     _draw_predictions(img, logistics, "#22c55e")
@@ -401,18 +513,65 @@ def run_photo(file: UploadFile = File(...)) -> HTMLResponse:
     buf = io.BytesIO()
     img.save(buf, format="JPEG", quality=90)
     image_b64 = base64.b64encode(buf.getvalue()).decode()
-    return _render_photo_result(image_b64, logistics, damage, settings)
+    body, summary = _photo_result_body(image_b64, logistics, damage, settings)
+    _record_history("foto", filename, "ok", summary, body)
+    return _page("Fotoğraf sonucu", body)
+
+
+@app.post("/run/photo/batch", response_class=HTMLResponse)
+def run_photo_batch(files: list[UploadFile] = File(...)) -> HTMLResponse:
+    settings = get_settings()
+    rows = []
+    for f in files:
+        data = f.file.read()
+        filename = f.filename or "upload.jpg"
+        try:
+            logistics = roboflow_client.detect_objects(data, settings)
+            damage = roboflow_client.detect_damage(data, settings)
+        except PipelineFailure as exc:
+            body = _error_body(exc)
+            run_id = _record_history("foto", filename, "err", exc.code.value, body)
+            rows.append((filename, "err", exc.code.value, run_id))
+            continue
+
+        img = Image.open(io.BytesIO(data)).convert("RGB")
+        _draw_predictions(img, logistics, "#22c55e")
+        _draw_predictions(img, damage, "#ef4444")
+        buf = io.BytesIO()
+        img.save(buf, format="JPEG", quality=90)
+        image_b64 = base64.b64encode(buf.getvalue()).decode()
+        body, summary = _photo_result_body(image_b64, logistics, damage, settings)
+        run_id = _record_history("foto", filename, "ok", summary, body)
+        rows.append((filename, "ok", summary, run_id))
+
+    table_rows = "".join(
+        f"<tr><td>{name}</td><td><span class='badge {status}'>{status}</span></td>"
+        f"<td>{summary}</td><td><a class='back' href='/history/{run_id}'>detay</a></td></tr>"
+        for name, status, summary, run_id in rows
+    )
+    ok_count = sum(1 for _, s, _, _ in rows if s == "ok")
+    body = f"""
+    <div class="card"><h2>Toplu fotoğraf testi tamamlandı</h2>
+    <p>{ok_count}/{len(rows)} başarılı</p></div>
+    <div class="card"><table><tr><th>Dosya</th><th>Durum</th><th>Özet</th><th></th></tr>{table_rows}</table></div>
+    """
+    return _page("Toplu fotoğraf sonucu", body)
 
 
 @app.post("/run/video", response_class=HTMLResponse)
 def run_video(file: UploadFile = File(...)) -> HTMLResponse:
     data = file.file.read()
-    request = _build_video_request(data, file.filename or "upload.mp4", file.content_type)
+    filename = file.filename or "upload.mp4"
+    request = _build_video_request(data, filename, file.content_type)
     try:
         event = video_analysis_pipeline.run(request)
     except PipelineFailure as exc:
-        return _render_error(exc)
-    return _render_video_result(event)
+        body = _error_body(exc)
+        _record_history("video", filename, "err", exc.code.value, body)
+        return _page("Hata", body)
+    body, summary = _video_result_body(event)
+    _record_history("video", filename, "ok", summary, body)
+    return _page("Video sonucu", body)
 
 
 if __name__ == "__main__":
