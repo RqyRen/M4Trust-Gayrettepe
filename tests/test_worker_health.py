@@ -11,6 +11,7 @@ import urllib.request
 
 import pytest
 
+from app.common import metrics
 from app.worker_health import WorkerState, start_health_server
 
 
@@ -58,3 +59,16 @@ def test_unknown_path_returns_404(server) -> None:
     srv, _state = server
     status, _ = _get(srv.server_port, "/nope")
     assert status == 404
+
+
+def test_metrics_endpoint_reflects_live_counters(server) -> None:
+    # Berke review #12: /internal/v1/metrics gercek sayac degerlerini dondurmeli.
+    srv, _state = server
+    before = metrics.snapshot()["dead_letter_count"]
+    metrics.increment("dead_letter_count")
+
+    status, body = _get(srv.server_port, "/internal/v1/metrics")
+
+    assert status == 200
+    assert body["dead_letter_count"] == before + 1
+    assert set(body) >= set(metrics.snapshot())

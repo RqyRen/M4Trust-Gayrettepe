@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from app import worker
+from app.common import metrics
 from app.common.cancellation import JobCancelled
 from app.common.idempotency import JobStore, Resolution, ResolveResult, identity_of
 from app.contracts.errors import ErrorCode, PipelineFailure
@@ -60,6 +61,25 @@ def _request_body() -> bytes:
 
 def _cancel_message() -> dict:
     return json.loads((_EXAMPLES / "job/cancel-request.json").read_text(encoding="utf-8"))
+
+
+def test_semantic_violation_increments_contract_violation_and_dead_letter_metrics(monkeypatch) -> None:
+    """Berke review #12: metrics.py'nin gercek worker.handle_command yolundan
+    (test_metrics.py sadece izole modulu test ediyor) gercekten artirildigini kanitlar."""
+    monkeypatch.setattr(worker, "_store", JobStore())
+    monkeypatch.setattr(worker, "_cancellation", _FakeCancellationStore())
+
+    before = metrics.snapshot()
+    bad_request = _request()
+    bad_request["producer"]["service"] = "some-imposter-service"
+
+    channel = MagicMock()
+    worker.handle_command(channel, _FakeMethod(), None, json.dumps(bad_request).encode("utf-8"))
+
+    after = metrics.snapshot()
+    assert after["contract_violation_count"] == before["contract_violation_count"] + 1
+    assert after["dead_letter_count"] == before["dead_letter_count"] + 1
+    channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
 
 
 def test_schema_invalid_failed_event_is_dead_lettered_not_published(monkeypatch) -> None:

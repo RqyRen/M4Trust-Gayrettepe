@@ -18,13 +18,14 @@ import logging
 import os
 import time
 
+from app.common import metrics
 from app.common.cancellation import JobCancelled, build_cancellation_store
 from app.common.heartbeat import run_with_heartbeat
 from app.common.idempotency import Resolution, build_job_store, identity_of
 from app.common.logging_setup import configure_logging
 from app.common.retry import DEFAULT_POLICY, run_with_retry
 from app.config import get_settings
-from app.contracts.errors import ContractViolation, PipelineFailure
+from app.contracts.errors import ContractViolation, ErrorCode, PipelineFailure
 from app.contracts.validation import validate_command, validate_outgoing, validate_semantic_consistency
 from app.messaging.consumer import start_consuming
 from app.messaging.publisher import PublishConfirmationFailed, publish_result
@@ -46,6 +47,7 @@ def _publish_and_record(channel, request: dict, identity, event: dict, *, comple
         # olabilir); Spring'e yine de yayinlandi, ama bu artik zombie bir
         # yazma -- kayit baskasinin sonucuna dokunulmadan atlandi (bulgu,
         # 16 Temmuz 2026).
+        metrics.increment("lease_reclaim_count")
         logger.warning(
             "terminal record rejected (lease reclaimed by another worker) jobId=%s",
             request["jobId"],
@@ -62,6 +64,7 @@ def handle_command(channel, method, properties, body: bytes) -> None:
     try:
         raw = json.loads(body)
     except json.JSONDecodeError:
+        metrics.increment("dead_letter_count")
         logger.warning("command JSON parse failed rk=%s -> dead-letter", method.routing_key)
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
@@ -73,6 +76,10 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         try:
             cancel_envelope = validate_command(raw)
         except ContractViolation as exc:
+            metrics.increment("contract_violation_count")
+            metrics.increment("dead_letter_count")
+            if exc.code is ErrorCode.UNSUPPORTED_SCHEMA_VERSION:
+                metrics.increment("unsupported_schema_version_count")
             logger.warning(
                 "cancel contract violation code=%s -> dead-letter",
                 exc.code.value,
@@ -82,6 +89,7 @@ def handle_command(channel, method, properties, body: bytes) -> None:
             return
         cancel_request = cancel_envelope.model_dump()
         reason = cancel_request["payload"]["reason"]
+        metrics.increment("cancellation_requested_count")
         _cancellation.mark_cancelled(cancel_request["jobId"], reason=reason)
         logger.info(
             "cancellation intent recorded reason=%s",
@@ -94,6 +102,10 @@ def handle_command(channel, method, properties, body: bytes) -> None:
     try:
         envelope = validate_command(raw)
     except ContractViolation as exc:
+        metrics.increment("contract_violation_count")
+        metrics.increment("dead_letter_count")
+        if exc.code is ErrorCode.UNSUPPORTED_SCHEMA_VERSION:
+            metrics.increment("unsupported_schema_version_count")
         logger.warning(
             "contract violation code=%s -> dead-letter",
             exc.code.value,
@@ -110,6 +122,8 @@ def handle_command(channel, method, properties, body: bytes) -> None:
     try:
         validate_semantic_consistency(request, routing_key=method.routing_key)
     except ContractViolation as exc:
+        metrics.increment("contract_violation_count")
+        metrics.increment("dead_letter_count")
         logger.warning(
             "semantic contract violation code=%s -> dead-letter",
             exc.code.value,
@@ -127,6 +141,8 @@ def handle_command(channel, method, properties, body: bytes) -> None:
 
     if resolved.resolution is Resolution.CONFLICT:
         # Ayni jobId + farkli input hash: contract violation (§17.1).
+        metrics.increment("job_identity_conflict_count")
+        metrics.increment("dead_letter_count")
         logger.warning("job identity conflict -> dead-letter", extra=log_context)
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
@@ -145,9 +161,11 @@ def handle_command(channel, method, properties, body: bytes) -> None:
             publish_result(channel, event, completed=completed)
         except PublishConfirmationFailed:
             # Kayit zaten terminal; forget YOK -- sadece bu redelivery'i dead-letter'a birak.
+            metrics.increment("dead_letter_count")
             logger.exception("broker did not confirm terminal republish -> dead-letter", extra=log_context)
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
+        metrics.increment("terminal_republish_count")
         logger.info("duplicate after terminal -> republished", extra=log_context)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
@@ -163,10 +181,13 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         try:
             publish_result(channel, event, completed=completed)
         except PublishConfirmationFailed:
+            metrics.increment("dead_letter_count")
             logger.exception("broker still did not confirm pending event -> dead-letter", extra=log_context)
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
+        metrics.increment("terminal_republish_count")
         if not _store.mark_terminal(identity, event):
+            metrics.increment("lease_reclaim_count")
             logger.warning("terminal record rejected after pending republish", extra=log_context)
         logger.info("pending publish retried -> republished and finalized", extra=log_context)
         channel.basic_ack(delivery_tag=method.delivery_tag)
@@ -176,6 +197,7 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         # Berke review #1: henuz baslamamis job calistirilmamali. Claim'i geri
         # birak ki lease bosuna idempotency_lease_seconds kadar kilitli kalmasin.
         _store.forget(identity)
+        metrics.increment("cancellation_completed_count")
         logger.info("job cancelled before start -> skipped, no result published", extra=log_context)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
@@ -199,6 +221,7 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         # Henuz hicbir sonuc durable yazilmadi (PENDING_PUBLISH'e ulasilmadi),
         # bu yuzden guvenle atlanabilir -- claim'i geri birak.
         _store.forget(identity)
+        metrics.increment("cancellation_completed_count")
         logger.info("job cancelled mid-pipeline -> skipped, no result published", extra=log_context)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
@@ -214,6 +237,8 @@ def handle_command(channel, method, properties, body: bytes) -> None:
             validate_outgoing(failed_event)
         except ContractViolation:
             _store.forget(identity)
+            metrics.increment("contract_violation_count")
+            metrics.increment("dead_letter_count")
             logger.exception("failed event failed schema validation -> dead-letter", extra=log_context)
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
@@ -229,6 +254,7 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         # dogrular. Sahiplik kaybedilmisse publish HIC yapilmaz -- baskasi
         # zaten devralmis/bitirmis demektir.
         if not _store.commit_pending_publish(identity, failed_event):
+            metrics.increment("lease_reclaim_count")
             logger.warning("lease reclaimed before publish; dropping this attempt's failed result", extra=log_context)
             channel.basic_ack(delivery_tag=method.delivery_tag)
             return
@@ -237,6 +263,7 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         except PublishConfirmationFailed:
             # forget YOK: event PENDING_PUBLISH olarak durable kaldi, sonraki
             # redelivery pipeline'i tekrar calistirmadan yeniden publish dener.
+            metrics.increment("dead_letter_count")
             logger.exception(
                 "broker did not confirm failed event -> dead-letter (preserved as PENDING_PUBLISH)",
                 extra=log_context,
@@ -248,18 +275,21 @@ def handle_command(channel, method, properties, body: bytes) -> None:
     except Exception:
         # Beklenmeyen hata: kaydi geri al ki mesaj yeniden islenebilsin.
         _store.forget(identity)
+        metrics.increment("dead_letter_count")
         logger.exception("unexpected worker error -> dead-letter", extra=log_context)
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
     logger.info("job succeeded attempts=%s", attempts, extra={**log_context, "attemptNumber": attempts})
     if not _store.commit_pending_publish(identity, event):
+        metrics.increment("lease_reclaim_count")
         logger.warning("lease reclaimed before publish; dropping this attempt's result", extra=log_context)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
     try:
         _publish_and_record(channel, request, identity, event, completed=True)
     except PublishConfirmationFailed:
+        metrics.increment("dead_letter_count")
         logger.exception(
             "broker did not confirm completed event -> dead-letter (preserved as PENDING_PUBLISH)",
             extra=log_context,
