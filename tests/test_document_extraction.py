@@ -27,7 +27,9 @@ from app.contracts.errors import ContractViolation, ErrorCode, PipelineFailure
 from app.contracts.validation import validate_outgoing
 from app.pipeline.document_extraction import llm as llm_module
 from app.pipeline.document_extraction import mapping as mapping_module
+from app.pipeline.document_extraction import name_masking as name_masking_module
 from app.pipeline.document_extraction.media import DOCX, PDF, detect_media_type
+from app.pipeline.document_extraction import pipeline as pipeline_module
 from app.pipeline.document_extraction.pipeline import run
 from app.pipeline.registry import pipeline_for
 
@@ -119,6 +121,7 @@ _HYBRID_PDF_BYTES = _hybrid_pdf_bytes()
 _JUNK = b"just plain text, not a document"
 _MALFORMED_PDF = b"%PDF-1.7\n" + b"not a real pdf body, no xref table " * 20
 _PDF_WITH_TAX_ID_BYTES = _real_pdf_bytes("ACME Corp, Vergi No: 1234567890, agrees to pay 1000 EUR within 30 days.")
+_PDF_WITH_PERSON_NAME_BYTES = _real_pdf_bytes("This contract is signed by Ahmet Yilmaz.")
 
 _BODIES = {
     "/pdf": _PDF_BYTES,
@@ -130,6 +133,7 @@ _BODIES = {
     "/blank-scanned": _BLANK_SCANNED_PDF_BYTES,
     "/hybrid": _HYBRID_PDF_BYTES,
     "/pdf-with-tax-id": _PDF_WITH_TAX_ID_BYTES,
+    "/pdf-with-person-name": _PDF_WITH_PERSON_NAME_BYTES,
 }
 
 
@@ -159,6 +163,17 @@ def _no_real_legal_rag(monkeypatch: pytest.MonkeyPatch) -> None:
     kendisini test eden test bunu kendi icinde ayrica override eder.
     """
     monkeypatch.setattr(llm_module.legal_rag, "retrieve", lambda *a, **k: [])
+
+
+@pytest.fixture(autouse=True)
+def _no_real_name_masking(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bu dosyadaki testler NER tabanli kisi-adi maskelemeyi degil, extraction'i
+    test ediyor. Mock'lanmazsa her testte agir bir transformers NER modeli
+    belleye yuklenir (bkz. _no_real_legal_rag ile ayni gerekce). Bu ozelligi
+    kendisi test eden test (asagida) bu fixture'i kendi icinde override eder.
+    """
+    monkeypatch.setattr(pipeline_module, "mask_person_names", lambda text: (text, {}))
+    monkeypatch.setattr(pipeline_module, "restore_person_names", lambda value, name_map: value)
 
 
 @pytest.fixture(scope="module")
@@ -452,6 +467,55 @@ def test_llm_never_receives_raw_tax_id_but_output_shape_is_unchanged(
         "masked": True,
         "confidence": 0.8,
     }
+
+
+def test_person_name_masked_before_llm_and_restored_in_party_legal_name(
+    base_url: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """20 Temmuz 2026: name_masking.py'nin pipeline'a dogru bagli oldugunu kanitlar.
+
+    NER modelinin kendisi burada sahtelenir (gercegi test_name_masking.py'de
+    ayrica test edildi); bu test sadece round-trip'i kanitlar: (1) token'li
+    metin LLM'e gider, gercek isim gitmez, (2) LLM ciktisinda partiy'nin
+    legalName'i olarak KULLANILAN token, canonical sonucta gercek isme geri
+    donusturulur -- taraf-adi cikarimi bozulmaz.
+    """
+    real_name = "Ahmet Yilmaz"
+    token = "[MASKED_PERSON_1]"
+
+    def _fake_mask(text: str) -> tuple[str, dict[str, str]]:
+        assert real_name in text
+        return text.replace(real_name, token), {token: real_name}
+
+    monkeypatch.setattr(pipeline_module, "mask_person_names", _fake_mask)
+    monkeypatch.setattr(pipeline_module, "restore_person_names", name_masking_module.restore_person_names)
+
+    captured_text: dict[str, str] = {}
+
+    def _spy_llm(text: str, settings):
+        captured_text["value"] = text
+        return {
+            **_CANNED_LLM_OUTPUT,
+            "parties": [
+                {
+                    "role": "SELLER",
+                    "legalName": token,
+                    "legalNameConfidence": 0.9,
+                    "taxIdentifier": None,
+                    "taxIdentifierConfidence": 0.0,
+                    "page": 1,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(llm_module, "extract_structured_data", _spy_llm)
+    request = _request(base_url, "/pdf-with-person-name", _PDF_WITH_PERSON_NAME_BYTES)
+    event = run(request)
+
+    assert real_name not in captured_text["value"]
+    assert token in captured_text["value"]
+
+    assert event["payload"]["result"]["parties"][0]["legalName"]["value"] == real_name
 
 
 def test_truncated_document_produces_warning_and_forces_review(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:

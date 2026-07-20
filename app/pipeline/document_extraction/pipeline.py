@@ -12,8 +12,13 @@ ADR'deki adimlar ve mevcut durum:
   Hassas veri analizi      -> GERCEK: vergi no/TC kimlik/IBAN/e-posta/telefon
                                LLM'e GITMEDEN ONCE maskelenir (pii_masking.py,
                                bulgu 17 Temmuz 2026); vergi kimligi ayrica
-                               canonical ciktida da her zaman maskelenir (mapping.py)
-  Maskeleme                -> GERCEK (provider-oncesi + canonical, yukaridaki gibi)
+                               canonical ciktida da her zaman maskelenir (mapping.py).
+                               Serbest-metin kisi adlari da NER ile (best-effort,
+                               geri-donusturulebilir token) LLM'e gitmeden once
+                               maskelenir (name_masking.py, 20 Temmuz 2026).
+  Maskeleme                -> GERCEK (yapisal + kisi-adi NER maskeleme provider-
+                               oncesi; taraf-adi cikarimini bozmamak icin LLM
+                               ciktisinda kullanilan token'lar geri-donusturulur)
   RAG                      -> KAPSAM DISI (ilk surumde retrieval kullanilmiyor)
   LLM extraction           -> GERCEK (GPT-5.4, llm.py)
   Canonical schema donusumu-> GERCEK (mapping.py)
@@ -35,11 +40,12 @@ from app.contracts.validation import validate_outgoing
 from app.pipeline.deadline import check_deadline
 from app.pipeline.document_extraction import llm, mapping
 from app.pipeline.document_extraction.media import detect_media_type
+from app.pipeline.document_extraction.name_masking import mask_person_names, restore_person_names
 from app.pipeline.document_extraction.pii_masking import PRIVACY_VERSION, mask_pii
 from app.pipeline.document_extraction.text_extraction import ExtractedDocument, extract_text
 from app.storage.object_store import fetch_source
 
-PIPELINE_VERSION = "doc-pipeline-1.1.0"
+PIPELINE_VERSION = "doc-pipeline-1.2.0"
 PROMPT_VERSION = "contract-extraction-1.0.0"
 
 
@@ -127,10 +133,15 @@ def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) ->
         # vergi no/TC kimlik/IBAN/e-posta/telefon LLM'e hic ulasmaz. Canonical
         # ciktiyi etkilemez -- mapping.py vergi kimligini zaten daima maskeliyordu.
         masked_text = mask_pii(full_text)
+        # Serbest-metin kisi adlari (20 Temmuz 2026, name_masking.py): NER ile
+        # tespit edilip token'a cevrilir. name_map, LLM ciktisinda kullanilan
+        # token'lari taraf-adi cikariminda geri koymak icin asagida saklanir.
+        masked_text, name_map = mask_person_names(masked_text)
         truncation_warning = _truncation_warning(masked_text, settings)
         check_cancelled()
         check_deadline(deadline_at)
         llm_output = llm.extract_structured_data(masked_text, settings)
+        llm_output = restore_person_names(llm_output, name_map)
 
     document = {
         "detectedMediaType": detected_media_type,

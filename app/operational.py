@@ -27,7 +27,10 @@ _DOCUMENT_EXTRACTION_FEATURES = {
     "privacyProfiles": ["DEFAULT"],
     "piiMasking": (
         "Structured PII (tax identifier, national ID, IBAN, email, phone) is masked before "
-        "the LLM call. Free-text/general PII such as person names is NOT detected or masked."
+        "the LLM call. Free-text person names are also masked before the LLM call using a "
+        "local NER model (best-effort, not guaranteed complete); names the model uses as a "
+        "contract party's legalName are reversibly restored in the output, other detected "
+        "names are not. Company/legal-entity names are never masked."
     ),
     "textNormalization": False,
     "retrievalProfiles": ["M4TRUST_LEGAL_DEFAULT"],

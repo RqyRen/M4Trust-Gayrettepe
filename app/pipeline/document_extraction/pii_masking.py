@@ -10,10 +10,14 @@ mapping.py zaten vergi kimligini modelin cevabindan bagimsiz olarak her zaman
 maskeliyordu (bkz. modul docstring'i), yani modelin bu alanlari hic gormemesi
 kaybedilen bir bilgi degildir.
 
-Sirket/kisi adlari MASKELENMEZ -- bunlar canonical ciktida (`legalName`) gerekli
-ve KVKK kapsaminda tuzel kisi bilgisi kisisel veri sayilmaz. Kisi adi tespiti
-(gercek kisiler icin) guvenilir regex ile yapilamayacagi icin bu surumde
-kapsam disidir; gerekirse ayri bir NER tabanli cozum degerlendirilir.
+Bu modul yalniz YAPISAL alanlari (vergi no, TC kimlik, IBAN, e-posta, telefon)
+maskeler -- regex ile guvenilir sekilde tespit edilebildikleri icin. Sirket
+adlari (tuzel kisi) BURADA da hicbir zaman maskelenmez -- KVKK kapsaminda
+kisisel veri sayilmaz ve canonical ciktida (`legalName`) gerekli.
+
+Serbest-metin KISI adi maskelemesi (gercek sahislar icin, NER tabanli, geri-
+donusturulebilir) ayri bir modulde: name_masking.py (20 Temmuz 2026, ADR-001/
+002/007 denetimi sirasinda eklendi -- bkz. o modulun docstring'i).
 
 Best-effort'tur: regex tabanli tespit kesin degildir (asiri maskeleme -- ör.
 alakasiz bir 10 haneli referans numarasinin yanlislikla maskelenmesi -- guvenli
@@ -40,7 +44,7 @@ _MASKS: tuple[tuple[re.Pattern[str], str], ...] = (
     (_VERGI_NO_RE, "[MASKED_TAX_ID]"),
 )
 
-PRIVACY_VERSION = "provider-input-masking-1.0.0"
+PRIVACY_VERSION = "provider-input-masking-2.0.0"
 
 
 def mask_pii(text: str) -> str:
