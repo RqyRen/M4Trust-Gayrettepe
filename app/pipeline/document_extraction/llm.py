@@ -40,7 +40,12 @@ If the same legal entity (party) is mentioned multiple times in the document (e.
 in a header/preamble and again in a signature block, with a slightly different or more
 complete form of its name), extract it as ONE party entry only, using the most complete
 legal name found, not one entry per mention. Only list a party twice if the text
-genuinely describes two distinct legal entities with different names."""
+genuinely describes two distinct legal entities with different names.
+
+Some personal names in the text have been replaced with placeholder tokens of the form
+[MASKED_PERSON_N] for privacy. Treat each such token as a literal proper name and copy
+it exactly as-is into your output (e.g. as legalName) wherever a real name would
+otherwise go -- do not alter, translate, or omit the token."""
 
 _RULE_VALUE_TYPES = ["TEXT", "MONEY", "PERCENTAGE", "DURATION_DAYS", "DATE", "BOOLEAN", "QUANTITY"]
 
