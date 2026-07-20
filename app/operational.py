@@ -61,11 +61,21 @@ _CONTRACT_FILES: dict[str, Path] = {
 
 
 def build_capabilities(settings: Settings) -> dict:
-    """ADR-002 §21.3 formatinda capability listesi."""
+    """ADR-002 §21.3 formatinda capability listesi.
+
+    `gitCommitSha`/`buildTime`/`deploymentEnvironment` ADR-007 §28 (release
+    kimligi) icin eklendi -- Capabilities semasi `additionalProperties: true`
+    oldugundan (contracts/openapi/ai-internal-v1.yaml) saf additive bir alan,
+    schema degisikligi/Berke onayi gerektirmez (PR #34'teki `features` alaniyla
+    ayni gerekce).
+    """
     versions = list(settings.supported_schema_versions)
     return {
         "service": settings.service_name,
         "serviceVersion": settings.service_version,
+        "gitCommitSha": settings.git_commit_sha or None,
+        "buildTime": settings.build_time or None,
+        "deploymentEnvironment": settings.app_env,
         "capabilities": [
             {
                 "jobType": job_type,

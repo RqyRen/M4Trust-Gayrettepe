@@ -42,6 +42,17 @@ def test_capabilities_has_service_identity_and_job_types() -> None:
         assert "features" in c
 
 
+def test_capabilities_discloses_release_identity() -> None:
+    # ADR-007 §28: gitCommitSha/buildTime/deploymentEnvironment health veya
+    # info endpoint'inde gorulebilmeli. Build-arg verilmeden calisan test
+    # ortaminda gitCommitSha/buildTime bos -> None doner (hata degil).
+    response = client.get("/internal/v1/capabilities")
+    body = response.json()
+    assert "gitCommitSha" in body
+    assert "buildTime" in body
+    assert body["deploymentEnvironment"] == "local"
+
+
 def test_document_extraction_capabilities_disclose_actual_implementation_scope() -> None:
     """Berke review #10: capabilities RAG'in artik calistigini, text normalization/genel
     PII maskelemenin hala calismadigini acikca belirtmeli (17 Temmuz'da bu tersti)."""
