@@ -4,9 +4,15 @@ on:
   push:
   pull_request:
     branches: [main]
+  schedule:
+    # Weekly cross-repo contract drift check against Spring (see the
+    # contract-drift job below) -- Monday 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
 
 jobs:
   test-and-validate:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -32,11 +38,11 @@ jobs:
 
       # Contract sync-drift manifest (contracts/.sync-manifest.json): catches
       # a contract file being hand-edited without going through a `--sync`
-      # against Spring's repo. This CANNOT reach Spring's (private) repo, so
-      # it does not by itself detect Spring changing something upstream --
-      # that still requires periodically running `check_drift.py --sync
-      # <path-to-spring-repo>` locally and committing the refreshed manifest.
-      # See contracts/scripts/check_drift.py for the full explanation.
+      # against Spring's repo. This only compares against the LAST recorded
+      # sync -- it does not by itself detect Spring changing something
+      # upstream since then. The `contract-drift` job below does that (real
+      # cross-repo check, runs weekly + on demand, separate from this job so
+      # every push doesn't depend on Spring's repo being reachable).
       - name: Check contract sync-drift manifest
         run: python contracts/scripts/check_drift.py --check
 
@@ -47,3 +53,36 @@ jobs:
       # (see individual PR descriptions).
       - name: Run test suite
         run: python -m pytest -q
+
+  contract-drift:
+    name: Cross-repo contract drift check (Spring)
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo
+        uses: actions/checkout@v4
+
+      # m4trust-spring-front-prod (gencberke) is a public repo -- no
+      # credentials needed, plain checkout works (verified 20 Jul 2026, see
+      # contracts/scripts/check_drift.py docstring).
+      - name: Checkout Spring repo
+        uses: actions/checkout@v4
+        with:
+          repository: gencberke/m4trust-spring-front-prod
+          path: spring-repo
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      # Real byte-for-byte diff against Spring's current contracts/. Fails
+      # (non-zero exit) if anything differs -- this is the actual "did Spring
+      # change something we haven't synced yet" check; the --check step in
+      # test-and-validate above only catches local hand-edits since the last
+      # sync. On failure: someone should review the diff (see job log),
+      # decide if it's a real change, and run `check_drift.py --sync
+      # <path-to-spring-checkout>` locally to update the manifest via a PR --
+      # this job intentionally does not write/commit anything itself.
+      - name: Diff contracts/ against Spring's current repo
+        run: python contracts/scripts/check_drift.py --sync spring-repo

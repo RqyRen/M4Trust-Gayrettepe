@@ -6,25 +6,35 @@
 contract authority -- see contracts/README.md). There is no git submodule
 link between the two repos (polyrepo governance is still an open ADR on
 Berke's side), so this repo cannot automatically detect when Spring's copy
-changes without a cross-repo credential this repo does not hold.
+changes on its own -- something has to actually fetch and diff it.
+
+`m4trust-spring-front-prod` is a PUBLIC repo (verified 20 Jul 2026 via the
+GitHub API: `"private": false`), so that fetch needs no credential -- a plain
+`git clone`/`actions/checkout` works. An earlier note in this project assumed
+it was private and deferred automation for that reason; that assumption was
+wrong. The `contract-drift` job in `.github/workflows/ci.yml` runs this
+script's --sync mode on a weekly schedule (plus on-demand via
+workflow_dispatch) against a fresh checkout of Spring's repo.
 
 Two modes:
 
-  --check (default, CI-safe): recomputes SHA-256 for every tracked contract
-      file and compares against `contracts/.sync-manifest.json`, written by
-      the last `--sync`. This does NOT reach across to Spring's repo -- it
-      only catches contract files changing since the last recorded sync
-      (e.g. someone editing a schema by hand without going through Spring).
-      It cannot, by itself, detect that Spring changed and we haven't synced.
+  --check (default, CI-safe, runs on every push/PR): recomputes SHA-256 for
+      every tracked contract file and compares against
+      `contracts/.sync-manifest.json`, written by the last `--sync`. This
+      does NOT reach across to Spring's repo -- it only catches contract
+      files changing since the last recorded sync (e.g. someone editing a
+      schema by hand without going through Spring). It cannot, by itself,
+      detect that Spring changed and we haven't synced.
 
-  --sync SPRING_REPO_PATH (local only, both repos checked out on disk):
-      byte-for-byte diffs every tracked file here against the same path in
-      SPRING_REPO_PATH/contracts/, refuses to write a manifest if anything
-      differs (use --force to override after reviewing), then records
-      SHA-256 hashes plus Spring's current commit SHA into the manifest.
-      Run this periodically (or when told Spring changed something) as the
-      actual "did we drift" check; --check in CI just keeps that manifest
-      honest between syncs.
+  --sync SPRING_REPO_PATH (both repos checked out on disk -- locally, or in
+      the scheduled CI job): byte-for-byte diffs every tracked file here
+      against the same path in SPRING_REPO_PATH/contracts/, refuses to write
+      a manifest if anything differs (use --force to override after
+      reviewing), then records SHA-256 hashes plus Spring's current commit
+      SHA into the manifest. This is the actual "did we drift" check;
+      --check just keeps that manifest honest between syncs. The CI job
+      intentionally does not commit the manifest on your behalf -- a real
+      diff found there means a human should review it and push a --sync PR.
 """
 from __future__ import annotations
 
