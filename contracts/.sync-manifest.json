@@ -1,7 +1,7 @@
 {
-  "syncedAt": "2026-07-20T11:24:13Z",
+  "syncedAt": "2026-07-20T11:52:29Z",
   "sourceRepo": "m4trust-spring-front-prod",
-  "sourceCommit": "95914165d369c3e86f30b97b94b28facdc7e584b",
+  "sourceCommit": "0b663d0f48739f416bb0ad9281a396dbfdd4da6f",
   "files": {
     "asyncapi/m4trust-ai-v1.yaml": "a3a737b50a877dab4902ddbf3defb5aa9ffbf4572d8cb3295f30f274074fb20e",
     "CHANGELOG.md": "b3a98a25aa4e3a8e5c8f87c21fcb57dfad1d6a1bad7822502fbbbf8c7a546025",
