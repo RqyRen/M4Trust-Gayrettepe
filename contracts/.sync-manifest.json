@@ -1,10 +1,10 @@
 {
-  "syncedAt": "2026-07-19T11:24:56Z",
+  "syncedAt": "2026-07-20T11:24:13Z",
   "sourceRepo": "m4trust-spring-front-prod",
-  "sourceCommit": "13c2026fee2ef4c5bdf74d9a2d1d53ce53d02aeb",
+  "sourceCommit": "95914165d369c3e86f30b97b94b28facdc7e584b",
   "files": {
     "asyncapi/m4trust-ai-v1.yaml": "a3a737b50a877dab4902ddbf3defb5aa9ffbf4572d8cb3295f30f274074fb20e",
-    "CHANGELOG.md": "bcc0f54a4efb6c299054fa2a640d40f93c6f7afb87fddb4e1a2b59f9a70901e4",
+    "CHANGELOG.md": "b3a98a25aa4e3a8e5c8f87c21fcb57dfad1d6a1bad7822502fbbbf8c7a546025",
     "examples/document-extraction/full-request.json": "fb94c6578bf3ad6ef9adbf2ca17bddc4b00362f267fab6c8c33a8fe6da2394f8",
     "examples/document-extraction/minimum-request.json": "26de5ddda7bee1615cb28d073565bc469740ba41add99cbca064c28b65fada3f",
     "examples/document-extraction/non-retryable-failure.json": "7dc90534de66d6155fd3e7930bd4f6d306a9f531b3b38acec6ac080884c14cc4",
@@ -19,7 +19,7 @@
     "examples/video-analysis/success-result.json": "ad66555d85f38ee228a3dcf6f10a8839110c85d679eda05ac88cbbb0124b2956",
     "examples/video-analysis/warning-result.json": "09e04448095d2c662b7508a50f6c21411dc04c5e98e8e948b64ce6a2c433f4b9",
     "openapi/ai-internal-v1.yaml": "408bdca0c694328f94dffeb3f9f3adb2ce9a5768eca898ecb879822c70150762",
-    "README.md": "ab2dd5db262aa490a4ea0c156d7b4ffe4a2cb1a5ccb1d05024f9671ddcd03958",
+    "README.md": "b6b4fad4c3e47fc269b60addf0d5442ad331e1e49aaf2dda580ab3d87f4fee47",
     "schemas/common/attempt-1.0.0.schema.json": "34f3186a0cbdf0c198351137a004da8ad1afc2ea7d84f7318338ab6fe35daebc",
     "schemas/common/download-reference-1.0.0.schema.json": "2a3978c7d81be7bb5b51a5b61c055e9da3e67db697024fb3605751845c1b50bb",
     "schemas/common/error-1.0.0.schema.json": "979eec6bb1109248e97b710cb3792c18bd42ae55ba116e6170528ef488fd652f",

@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+- Added the Slice 11 additive provider-independent sandbox funding contract
+  (ADR-010 §2.2-§2.5): buyer-ADMIN, idempotent `POST /deals/{dealId}/funding-plan`
+  whose request carries only the Deal `expectedVersion` (amount/currency are always
+  server-copied from the RATIFIED package, never client-supplied), returning
+  synchronous `201 Created` with `FundingPlanDetail` and a `Location` at the same
+  singleton path; a second plan create for the same Deal returns `409`.
+- Added participant-readable `GET /deals/{dealId}/funding-plan` (plan + single
+  FundingUnit + current operation + `FundingStatus`, `404` until a plan exists),
+  `Idempotency-Key`-required `POST /funding-units/{fundingUnitId}/payment-operations`
+  returning `202 Accepted` with the `CREATED` `PaymentOperation` projection and a
+  `Location` at `/payment-operations/{paymentOperationId}`, `GET
+  /payment-operations/{paymentOperationId}` for polling, and `POST
+  /payment-operations/{paymentOperationId}/reconcile`, which accepts only an
+  `UNCONFIRMED` operation and returns `202` with the same operation `Location`.
+  Initiate and reconcile never call the provider in-request; only a durable
+  dispatch/audit/idempotency record is committed before the response.
+- Added closed `FundingStatus` (`NOT_CONFIGURED`/`PLANNED`/`PENDING`/
+  `PARTIALLY_FUNDED`/`FUNDED`, with `PARTIALLY_FUNDED` documented unreachable in V1),
+  `FundingUnitStatus` (`PLANNED`/`PENDING`/`FUNDED`/`FAILED`), and
+  `PaymentOperationStatus` (`CREATED`/`SUCCEEDED`/`DECLINED`/`UNCONFIRMED`) enums.
+  `PaymentOperation` exposes only a safe non-raw projection: status, an explicit
+  `reconciliationRequired` indication, and an opaque non-PII `providerReference`;
+  UNCONFIRMED is never treated as failure. Money fields use integer minor units and
+  uppercase ISO 4217 currency, matching Slice 10 `RatificationCommercialTerms`.
+- Added optional null-tolerant `DealDetail.funding` (`DealFundingSummary`) and
+  optional `canCreateFundingPlan`/`canInitiateFunding`/`canReconcilePaymentOperation`
+  members on `DealAvailableActions` without changing existing required Deal response
+  fields or their meanings. Locked stable `FUNDING_MUTATION_FORBIDDEN`,
+  `FUNDING_PLAN_ALREADY_EXISTS`, `FUNDING_UNIT_ALREADY_FUNDED`,
+  `PAYMENT_OPERATION_IN_FLIGHT`, stale-version, non-disclosing 404, and idempotency
+  Problem Details expectations, plus the `202`/`201` + `Location` response contracts,
+  in the exact public-contract validator. AI schemas, fixtures, AsyncAPI, and the
+  AI-internal OpenAPI remain unchanged.
+
+- Added the Slice 10 additive ratification contract: initiator package creation with
+  exact Deal `expectedVersion`, explicit positive I-JSON-safe `amountMinor` and
+  uppercase ISO 4217 `currency`, participant-readable immutable package detail and
+  retained history, and buyer/seller ADMIN approve/reject actions with target
+  `expectedPackageVersion` and UUID `Idempotency-Key`.
+- Added the dedicated closed `RatificationPackageSnapshot` as the sole canonical
+  content-hash input. It locks RFC 8785 JCS, UTF-8, lowercase SHA-256 hex, UUID and
+  currency casing, and unique UTF-8-bytewise `ruleReference` ordering; mutable,
+  actor-aware, audit, timestamp, id/version/status, approval, and wrapper fields are
+  explicitly outside the hash boundary.
+- Added optional Deal ratification readiness/current-package projection and optional
+  actor-aware create/approve/reject action members without changing existing required
+  Deal response fields or their meanings. Locked stable readiness, stale-package,
+  state, authorization, non-disclosure, and idempotency Problem Details expectations
+  in the exact public-contract validator. AI schemas, fixtures, AsyncAPI, and the
+  AI-internal OpenAPI remain unchanged.
+
+- Added the Slice 9 public manual-review contract: participant-readable extraction
+  review, initiator-only idempotent acceptance with target `analysisId`, bulk
+  kept/modified/excluded/added decisions, Deal `expectedVersion`, stable 403/404/
+  409/422 outcomes, and atomic `ACCEPTED` analysis semantics.
+- Added immutable RuleSetVersion history/detail reads, final-rule and excluded-decision
+  history projections, source-analysis/creator/time/previous-version provenance, and
+  unique server-assigned `manual-N` references for accepted manually added rules.
+- Added optional `canReviewExtraction` and nullable `currentRuleSet` to the closed
+  Deal response property allowlists without changing their existing required members;
+  omitted or unknown action availability is read-only/false for consumers.
+- Extended exact public OpenAPI validation for Slice 9 paths, scoped parameters,
+  response/request schemas, `ACCEPTED`, decision discriminators, idempotency,
+  immutable version projection, and stable concurrency errors. AI schemas, fixtures,
+  AsyncAPI, and the AI-internal OpenAPI are unchanged.
+
 - Added the optional advisory `legalBasis` object (`source` closed enum of Turkish
   legislation identifiers + `articleNo`) to document-extraction `result.rules[]`
   items. Backward-compatible additive change within schema 1.0.0 (ADR-002 §15.3);
