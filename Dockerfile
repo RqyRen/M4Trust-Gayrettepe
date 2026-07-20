@@ -57,8 +57,18 @@ COPY legal_corpus/embeddings/ ./legal_corpus/embeddings
 RUN useradd --create-home --uid 10001 appuser
 USER appuser
 
+# Release kimligi (ADR-007 §28): build sirasinda --build-arg ile verilir, ör:
+#   docker build --build-arg GIT_COMMIT_SHA=$(git rev-parse HEAD) \
+#                 --build-arg BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) .
+# Verilmezse bos kalir (Settings.git_commit_sha/build_time default'u da bos) --
+# /internal/v1/capabilities bu durumda null doner, build hatasi olusturmaz.
+ARG GIT_COMMIT_SHA=""
+ARG BUILD_TIME=""
+
 ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
+    PYTHONDONTWRITEBYTECODE=1 \
+    GIT_COMMIT_SHA=${GIT_COMMIT_SHA} \
+    BUILD_TIME=${BUILD_TIME}
 
 EXPOSE 8000
 

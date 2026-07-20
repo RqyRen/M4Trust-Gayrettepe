@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # Kanonik ad ADR-007 SS9 / contracts CHANGELOG'da m4trust-ai-service olarak sabit.
     service_name: str = "m4trust-ai-service"
     service_version: str = "0.1.0"
+    # Release kimligi (ADR-007 SS28): Docker build sirasinda --build-arg ile
+    # gomulur (bkz. Dockerfile). Bos string = image build-arg'sizi build edildi
+    # (ornegin lokal `docker build .`) -- hata degil, sadece bilinmiyor demektir.
+    git_commit_sha: str = ""
+    build_time: str = ""
 
     # Desteklenen contract major/schema version'lari (ADR-002 §15, §21.3)
     supported_schema_versions: tuple[str, ...] = ("1.0.0",)

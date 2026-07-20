@@ -147,14 +147,21 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
+    # ADR-002 §30: gecerli (conflict olmayan) her job istegi burada sayilir --
+    # ilk teslimat da, asagidaki dallardan biriyle duplicate sayilan
+    # yeniden-teslimatlar da (at-least-once delivery, §13).
+    metrics.increment("ai_jobs_requested_total")
+
     if resolved.resolution is Resolution.IN_PROGRESS:
         # Devam eden isi yeniden baslatma; duplicate teslimati sessizce ack'le.
+        metrics.increment("ai_job_duplicate_total")
         logger.info("duplicate while in progress -> skipped", extra=log_context)
         channel.basic_ack(delivery_tag=method.delivery_tag)
         return
 
     if resolved.resolution is Resolution.TERMINAL:
         # Tamamlanan isi tekrar calistirma; onceki terminal sonucu yeniden yayinla.
+        metrics.increment("ai_job_duplicate_total")
         event = resolved.terminal_event
         completed = event["eventType"] == "ai.job.completed.v1"
         try:
@@ -176,6 +183,7 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         # (crash veya broker sorunu). Pipeline'i TEKRAR CALISTIRMADAN -- LLM
         # deterministik olmadigi icin ayni jobId'ye iki farkli sonuc uretmemek
         # adina -- ayni event'i yeniden publish etmeyi dener.
+        metrics.increment("ai_job_duplicate_total")
         event = resolved.terminal_event
         completed = event["eventType"] == "ai.job.completed.v1"
         try:
@@ -227,6 +235,15 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         return
     except PipelineFailure as failure:
         duration_ms = int((time.monotonic() - started) * 1000)
+        metrics.increment("ai_jobs_failed_total")
+        metrics.increment("ai_job_duration_seconds_sum", amount=duration_ms / 1000)
+        metrics.increment("ai_job_duration_seconds_count")
+        if _cancellation.is_cancelled(identity.job_id):
+            # ADR-002 §20: cancel, son check_cancelled() checkpoint'inden SONRA
+            # gelmis olabilir -- pipeline yine de bitirip sonuc uretti. Best-effort
+            # semantigine uygun olarak yine de yayinlanir, sadece "gec sonuc"
+            # olarak sayilir; kabul/ret karari Spring'e ait.
+            metrics.increment("ai_late_result_total")
         failed_event = build_failed_event(
             request, failure, max_attempts=DEFAULT_POLICY.max_attempts, duration_ms=duration_ms
         )
@@ -280,6 +297,13 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
         return
 
+    duration_seconds = time.monotonic() - started
+    metrics.increment("ai_jobs_completed_total")
+    metrics.increment("ai_job_duration_seconds_sum", amount=duration_seconds)
+    metrics.increment("ai_job_duration_seconds_count")
+    if _cancellation.is_cancelled(identity.job_id):
+        # ADR-002 §20: bkz. failure dalindaki ayni mantik icin yorum.
+        metrics.increment("ai_late_result_total")
     logger.info("job succeeded attempts=%s", attempts, extra={**log_context, "attemptNumber": attempts})
     if not _store.commit_pending_publish(identity, event):
         metrics.increment("lease_reclaim_count")

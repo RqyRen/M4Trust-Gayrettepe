@@ -50,3 +50,25 @@ def test_all_berke_review_12_metrics_are_tracked() -> None:
         "provider_retry_count",
     }
     assert expected <= set(metrics.snapshot())
+
+
+def test_all_adr_002_recommended_metrics_are_tracked() -> None:
+    # ADR-002 §30'un onerdigi temel job-hacmi metrikleri (Berke review #12'nin
+    # sayaclarindan AYRI -- bkz. metrics.py modul docstring'i).
+    expected = {
+        "ai_jobs_requested_total",
+        "ai_jobs_completed_total",
+        "ai_jobs_failed_total",
+        "ai_job_duration_seconds_sum",
+        "ai_job_duration_seconds_count",
+        "ai_job_duplicate_total",
+        "ai_late_result_total",
+    }
+    assert expected <= set(metrics.snapshot())
+
+
+def test_increment_supports_float_amount_for_duration_accumulation() -> None:
+    before = metrics.snapshot()["ai_job_duration_seconds_sum"]
+    metrics.increment("ai_job_duration_seconds_sum", amount=1.5)
+    after = metrics.snapshot()["ai_job_duration_seconds_sum"]
+    assert after == before + 1.5

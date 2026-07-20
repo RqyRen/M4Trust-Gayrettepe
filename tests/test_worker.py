@@ -160,6 +160,7 @@ def test_pending_publish_redelivery_republishes_without_recomputing(monkeypatch)
     pipeline_calls: list[int] = []
     monkeypatch.setattr(worker, "pipeline_for", lambda job_type: pipeline_calls.append(1))
 
+    before = metrics.snapshot()["ai_job_duplicate_total"]
     channel = MagicMock()
     worker.handle_command(channel, _FakeMethod(), None, _request_body())
 
@@ -170,6 +171,8 @@ def test_pending_publish_redelivery_republishes_without_recomputing(monkeypatch)
     assert fake_store.mark_terminal_calls == [pending_event]
     channel.basic_ack.assert_called_once_with(delivery_tag=1)
     channel.basic_nack.assert_not_called()
+    # ADR-002 §30: PENDING_PUBLISH redelivery bir duplicate teslimattir.
+    assert metrics.snapshot()["ai_job_duplicate_total"] == before + 1
 
 
 class _LeaseLostStore:
@@ -236,12 +239,67 @@ def test_valid_failed_event_is_published_and_acked(monkeypatch) -> None:
 
     monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _broken_pipeline)
 
+    before = metrics.snapshot()["ai_jobs_failed_total"]
     channel = MagicMock()
     worker.handle_command(channel, _FakeMethod(), None, _request_body())
 
     channel.basic_publish.assert_called_once()
     channel.basic_ack.assert_called_once_with(delivery_tag=1)
     channel.basic_nack.assert_not_called()
+    # ADR-002 §30: gercek bir pipeline hatasi ai_jobs_failed_total'i artirmali.
+    assert metrics.snapshot()["ai_jobs_failed_total"] == before + 1
+
+
+def test_successful_job_increments_adr_002_job_metrics(monkeypatch) -> None:
+    # ADR-002 §30: gecerli bir istek ai_jobs_requested_total'i, basarili bir
+    # tamamlanma ai_jobs_completed_total ve sure sayaclarini artirmali.
+    monkeypatch.setattr(worker, "_store", JobStore())
+    monkeypatch.setattr(worker, "_cancellation", _FakeCancellationStore())
+
+    def _ok_pipeline(request: dict, **_kwargs) -> dict:
+        return {"eventType": "ai.job.completed.v1", "jobType": "DOCUMENT_EXTRACTION"}
+
+    monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _ok_pipeline)
+
+    before = metrics.snapshot()
+    channel = MagicMock()
+    worker.handle_command(channel, _FakeMethod(), None, _request_body())
+    after = metrics.snapshot()
+
+    channel.basic_publish.assert_called_once()
+    assert after["ai_jobs_requested_total"] == before["ai_jobs_requested_total"] + 1
+    assert after["ai_jobs_completed_total"] == before["ai_jobs_completed_total"] + 1
+    assert after["ai_job_duration_seconds_count"] == before["ai_job_duration_seconds_count"] + 1
+    assert after["ai_job_duration_seconds_sum"] >= before["ai_job_duration_seconds_sum"]
+    assert after["ai_late_result_total"] == before["ai_late_result_total"]  # iptal edilmedi
+
+
+def test_late_result_after_cancellation_is_still_published_and_counted(monkeypatch) -> None:
+    # ADR-002 §20: cancel, pipeline'in son check_cancelled() checkpoint'inden
+    # SONRA gelebilir -- worker bunu engelleyemez (best-effort). Sonuc yine de
+    # yayinlanir (Spring kabul/ret kararini kendi verir), ama "gec sonuc"
+    # olarak sayilmalidir.
+    monkeypatch.setattr(worker, "_store", JobStore())
+    job_id = json.loads(_request_body())["jobId"]
+    late_cancellation = _FakeCancellationStore()  # basta iptal edilmemis -- on-kontrolu gecer
+    monkeypatch.setattr(worker, "_cancellation", late_cancellation)
+
+    def _ok_pipeline(request: dict, **_kwargs) -> dict:
+        # Pipeline'in SON check_cancelled() checkpoint'i gecti (calisiyor, cagirilmiyor
+        # bile), ama tam is bitmisken cancel event'i gelmis -- gercek bir race'i taklit
+        # eder. worker.py bunu publish'ten hemen once ayrica kontrol eder.
+        late_cancellation.mark_cancelled(job_id, reason="RACE_AFTER_LAST_CHECKPOINT")
+        return {"eventType": "ai.job.completed.v1", "jobType": "DOCUMENT_EXTRACTION"}
+
+    monkeypatch.setattr(worker, "pipeline_for", lambda job_type: _ok_pipeline)
+
+    before = metrics.snapshot()["ai_late_result_total"]
+    channel = MagicMock()
+    worker.handle_command(channel, _FakeMethod(), None, _request_body())
+
+    # Best-effort: is zaten bittigi icin yine de yayinlanir.
+    channel.basic_publish.assert_called_once()
+    assert metrics.snapshot()["ai_late_result_total"] == before + 1
 
 
 # --- Cancellation (Berke review #1: best-effort cooperative cancellation) ---
