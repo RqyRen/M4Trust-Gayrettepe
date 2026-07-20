@@ -40,6 +40,12 @@ Job türleri: `DOCUMENT_EXTRACTION`, `VIDEO_ANALYSIS`.
 | `ai-worker` | RabbitMQ command queue'larını tüketir, pipeline'ı çalıştırır, result event basar. Asıl iş. |
 | `ai-api` | Sadece operasyonel HTTP: `/health/live`, `/health/ready`, `/internal/v1/capabilities`, `/internal/v1/contracts`. Inference endpoint'i **yok**. |
 
+`ai-worker`'ın ek bir altyapı bağımlılığı var: **Redis** — job idempotency/lease store
+(ADR-002 §17.1), cooperative cancellation intent'leri ve operasyonel sayaçlar için. ADR-001
+§21'in deployment birimleri listesinde ayrıca adı geçmiyor; kapsamı ADR-001 §4.2'deki
+"teknik çalışma verisi" altına giriyor (business state değil), meşru ama ayrıca not
+edilmesi iyi (Fable 5 mimari denetimi, 20 Temmuz 2026).
+
 ## Klasör yapısı
 
 ```
@@ -73,7 +79,7 @@ tests/                    mock-first minimum kritik testler
 ## Local çalıştırma
 
 ```powershell
-# 1) Altyapı (RabbitMQ + MinIO)
+# 1) Altyapı (RabbitMQ + MinIO + Redis)
 docker compose up -d
 
 # 2) Bağımlılıklar
