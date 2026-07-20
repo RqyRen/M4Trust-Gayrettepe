@@ -148,3 +148,22 @@ def test_failed_event_binds_category_and_retry_flag() -> None:
     error = event["payload"]["error"]
     assert error["category"] == "NON_RETRYABLE_TECHNICAL"
     assert error["retryRecommended"] is False
+
+
+def test_failed_event_reports_the_same_pipeline_version_as_a_successful_run() -> None:
+    """Bulgu (Fable 5 mimari denetimi, 20 Temmuz 2026): pipelineVersion burada
+    elle tutulan, basarili pipeline'daki gercek sabitten bagimsiz bir sozlukten
+    okunuyordu -- ikisi zamanla eskiyip birbirinden sapmisti (bir job basarisiz
+    olunca YANLIS/eski bir pipelineVersion raporlaniyordu). Artik ayni sabitten
+    okunmali.
+    """
+    from app.pipeline.document_extraction.pipeline import PIPELINE_VERSION as doc_version
+    from app.pipeline.video_analysis.pipeline import PIPELINE_VERSION as video_version
+
+    failure = PipelineFailure(ErrorCode.MODEL_PROVIDER_TIMEOUT, "timed out")
+
+    doc_event = build_failed_event(_request("document-extraction/full-request.json"), failure, max_attempts=3)
+    assert doc_event["payload"]["technicalMetadata"]["pipelineVersion"] == doc_version
+
+    video_event = build_failed_event(_request("video-analysis/full-request.json"), failure, max_attempts=3)
+    assert video_event["payload"]["technicalMetadata"]["pipelineVersion"] == video_version

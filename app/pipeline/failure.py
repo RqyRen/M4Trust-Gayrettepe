@@ -11,10 +11,17 @@ from datetime import datetime, timezone
 
 from app.config import get_settings
 from app.contracts.errors import PipelineFailure, retry_recommended_for
+from app.pipeline.document_extraction.pipeline import PIPELINE_VERSION as _DOCUMENT_EXTRACTION_VERSION
+from app.pipeline.video_analysis.pipeline import PIPELINE_VERSION as _VIDEO_ANALYSIS_VERSION
 
+# Bulgu (Fable 5 mimari denetimi, 20 Temmuz 2026): burada elle tutulan sabit bir
+# sozluk vardi, basarili joblardaki gercek PIPELINE_VERSION'dan bagimsiz olarak
+# eskiyordu -- basarisiz bir job'un event'i, basarili bir job'unkinden FARKLI
+# (eski) bir pipelineVersion raporluyordu, observability'de yanilticiydi. Artik
+# tek kaynaktan (pipeline modullerinin kendi sabitinden) okunuyor.
 _PIPELINE_VERSION = {
-    "DOCUMENT_EXTRACTION": "doc-pipeline-1.0.0",
-    "VIDEO_ANALYSIS": "video-pipeline-1.0.0",
+    "DOCUMENT_EXTRACTION": _DOCUMENT_EXTRACTION_VERSION,
+    "VIDEO_ANALYSIS": _VIDEO_ANALYSIS_VERSION,
 }
 
 
