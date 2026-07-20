@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- Added the Slice 12 additive fulfillment and evidence contract (ADR-011 §2.1-§2.6):
+  seller ADMIN/MEMBER `POST /deals/{dealId}/fulfillment` to atomically create the
+  Deal's single fulfillment record and primary milestone bound to the current
+  RATIFIED package, with required `Idempotency-Key` and `expectedVersion`;
+  participant-readable `GET /deals/{dealId}/fulfillment`; seller ADMIN/MEMBER
+  `POST /deals/{dealId}/fulfillment/evidence/upload-intents` returning a
+  short-lived direct-PUT target; `POST
+  /deals/{dealId}/fulfillment/evidence/{evidenceSubmissionId}/finalize` that
+  verifies storage size/SHA-256/object version outside the DB transaction and
+  atomically marks the submission SUBMITTED, sets it as current evidence, and
+  moves FulfillmentStatus to REVIEW_REQUIRED; participant
+  `POST .../download-link` minting a short-lived pinned GET URL; and buyer
+  ADMIN-only `.../accept` and `.../reject` actions with required
+  `expectedVersion`/`expectedEvidenceVersion` that check the target under lock.
+  Accept completes only the milestone and fulfillment (COMPLETED); the Deal
+  remains ACTIVE and no payment release, settlement, payout, refund, provider
+  call, or AI job is produced. Reject preserves immutable REJECTED history and
+  returns status to EVIDENCE_REQUIRED.
+- Added closed `FulfillmentStatus`
+  (`NOT_STARTED`/`IN_PROGRESS`/`EVIDENCE_REQUIRED`/`REVIEW_REQUIRED`/`COMPLETED`/
+  `CANCELLED`, with `CANCELLED` forward-compatible but unreachable in Slice 12),
+  `EvidenceSubmissionStatus` (`PENDING_UPLOAD`/`SUBMITTED`/`ACCEPTED`/`REJECTED`),
+  `EvidenceType` (`DELIVERY_NOTE`/`INVOICE`/`VIDEO`/`PHOTO`/`SIGNED_DOCUMENT`/
+  `OTHER`), and `EvidenceMediaType` (PDF, DOCX, JPEG, PNG, MP4) enums.
+- Added optional null-tolerant `DealDetail.fulfillment` (`DealFulfillmentSummary`)
+  and optional `canStartFulfillment`/`canUploadEvidence`/`canAcceptEvidence`/
+  `canRejectEvidence` members on `DealAvailableActions` without changing existing
+  required Deal response fields or their meanings. Locked stable
+  `FULFILLMENT_START_FORBIDDEN`, `EVIDENCE_UPLOAD_FORBIDDEN`,
+  `EVIDENCE_REVIEW_FORBIDDEN`, `FULFILLMENT_ALREADY_EXISTS`,
+  `EVIDENCE_ALREADY_SUBMITTED`, stale-version, state-conflict, non-disclosing
+  404, verification-failure, and idempotency Problem Details expectations in the
+  exact public-contract validator. AI schemas, fixtures, AsyncAPI, and the
+  AI-internal OpenAPI remain unchanged.
+
 - Added the Slice 11 additive provider-independent sandbox funding contract
   (ADR-010 §2.2-§2.5): buyer-ADMIN, idempotent `POST /deals/{dealId}/funding-plan`
   whose request carries only the Deal `expectedVersion` (amount/currency are always
