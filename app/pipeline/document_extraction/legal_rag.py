@@ -16,6 +16,11 @@ import numpy as np
 
 from app.pipeline.document_extraction.embedding_provider import embed_texts
 
+# technicalMetadata.retrievalVersion'da tasinir (ADR-002 SS8 ornegi:
+# "retrievalVersion": "legal-rag-2.1.0"). Kulliyat veya retrieval mantigi
+# degistiginde (chunking, embedding modeli, top_k semantigi) artirilmali.
+LEGAL_RAG_VERSION = "legal-rag-1.0.0"
+
 _EMBEDDINGS_DIR = Path(__file__).resolve().parents[3] / "legal_corpus" / "embeddings"
 
 _normalized_vectors: np.ndarray | None = None

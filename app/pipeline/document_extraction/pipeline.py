@@ -19,7 +19,10 @@ ADR'deki adimlar ve mevcut durum:
   Maskeleme                -> GERCEK (yapisal + kisi-adi NER maskeleme provider-
                                oncesi; taraf-adi cikarimini bozmamak icin LLM
                                ciktisinda kullanilan token'lar geri-donusturulur)
-  RAG                      -> KAPSAM DISI (ilk surumde retrieval kullanilmiyor)
+  RAG                      -> GERCEK (Turk mevzuati madde retrieval, legal_rag.py,
+                               19 Temmuz 2026 - Berke review'undan bagimsiz, kullanicinin
+                               kendi basalttigi ozellik; basarisiz olursa cikarim
+                               baglamsiz devam eder, kapsam disi degil)
   LLM extraction           -> GERCEK (GPT-5.4, llm.py)
   Canonical schema donusumu-> GERCEK (mapping.py)
   Teknik schema validation -> GERCEK (yayindan once dogrulanir)
@@ -39,6 +42,7 @@ from app.config import get_settings
 from app.contracts.validation import validate_outgoing
 from app.pipeline.deadline import check_deadline
 from app.pipeline.document_extraction import llm, mapping
+from app.pipeline.document_extraction.legal_rag import LEGAL_RAG_VERSION
 from app.pipeline.document_extraction.media import detect_media_type
 from app.pipeline.document_extraction.name_masking import mask_person_names, restore_person_names
 from app.pipeline.document_extraction.pii_masking import PRIVACY_VERSION, mask_pii
@@ -188,7 +192,7 @@ def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) ->
                 "modelFamily": settings.openai_model,
                 "modelVersion": settings.openai_model,
                 "promptVersion": PROMPT_VERSION,
-                "retrievalVersion": None,  # RAG bu surumde kullanilmiyor
+                "retrievalVersion": LEGAL_RAG_VERSION,
                 "parserVersion": "pypdf+python-docx",
                 "privacyVersion": PRIVACY_VERSION,
                 "durationMs": duration_ms,
