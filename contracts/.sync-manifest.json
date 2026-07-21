@@ -1,10 +1,10 @@
 {
-  "syncedAt": "2026-07-20T22:17:33Z",
+  "syncedAt": "2026-07-21T00:56:24Z",
   "sourceRepo": "m4trust-spring-front-prod",
-  "sourceCommit": "d342b01b4db16bcb602271cfab1ba5a9d1bcc33a",
+  "sourceCommit": "476afe676383b959f8db147d0115606091ad5c1e",
   "files": {
     "asyncapi/m4trust-ai-v1.yaml": "a3a737b50a877dab4902ddbf3defb5aa9ffbf4572d8cb3295f30f274074fb20e",
-    "CHANGELOG.md": "c7d497a476b9dfa8413ce13570995628b69dd0a4706d676b6fab1fb5534f5255",
+    "CHANGELOG.md": "956d1f14fda18923bf0f32e530ea44ad26c203cd747c636d42b934e26729f917",
     "examples/document-extraction/full-request.json": "fb94c6578bf3ad6ef9adbf2ca17bddc4b00362f267fab6c8c33a8fe6da2394f8",
     "examples/document-extraction/minimum-request.json": "26de5ddda7bee1615cb28d073565bc469740ba41add99cbca064c28b65fada3f",
     "examples/document-extraction/non-retryable-failure.json": "7dc90534de66d6155fd3e7930bd4f6d306a9f531b3b38acec6ac080884c14cc4",
@@ -19,7 +19,7 @@
     "examples/video-analysis/success-result.json": "ad66555d85f38ee228a3dcf6f10a8839110c85d679eda05ac88cbbb0124b2956",
     "examples/video-analysis/warning-result.json": "09e04448095d2c662b7508a50f6c21411dc04c5e98e8e948b64ce6a2c433f4b9",
     "openapi/ai-internal-v1.yaml": "408bdca0c694328f94dffeb3f9f3adb2ce9a5768eca898ecb879822c70150762",
-    "README.md": "a93b0df04043747a2516a58f8857ae69aab23daeca11323d2f3780179954e401",
+    "README.md": "39757f137d69b5100e0ca976ae5b2847cc6cfd6e5e7826b0744f0ae8216597a5",
     "schemas/common/attempt-1.0.0.schema.json": "34f3186a0cbdf0c198351137a004da8ad1afc2ea7d84f7318338ab6fe35daebc",
     "schemas/common/download-reference-1.0.0.schema.json": "2a3978c7d81be7bb5b51a5b61c055e9da3e67db697024fb3605751845c1b50bb",
     "schemas/common/error-1.0.0.schema.json": "979eec6bb1109248e97b710cb3792c18bd42ae55ba116e6170528ef488fd652f",
