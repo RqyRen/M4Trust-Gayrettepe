@@ -23,7 +23,12 @@ from app.common.logging_setup import configure_logging
 from app.common.retry import DEFAULT_POLICY, run_with_retry
 from app.config import get_settings
 from app.contracts.errors import ContractViolation, ErrorCode, PipelineFailure
-from app.contracts.validation import validate_command, validate_outgoing, validate_semantic_consistency
+from app.contracts.validation import (
+    validate_cancel_semantic_consistency,
+    validate_command,
+    validate_outgoing,
+    validate_semantic_consistency,
+)
 from app.messaging.consumer import start_consuming
 from app.messaging.publisher import PublishConfirmationFailed, publish_result
 from app.pipeline.failure import build_failed_event
@@ -85,6 +90,18 @@ def handle_command(channel, method, properties, body: bytes) -> None:
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
             return
         cancel_request = cancel_envelope.model_dump()
+        try:
+            validate_cancel_semantic_consistency(cancel_request, routing_key=method.routing_key)
+        except ContractViolation as exc:
+            metrics.increment("contract_violation_count")
+            metrics.increment("dead_letter_count")
+            logger.warning(
+                "cancel semantic contract violation code=%s -> dead-letter",
+                exc.code.value,
+                extra={"jobId": cancel_request.get("jobId")},
+            )
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=False)
+            return
         reason = cancel_request["payload"]["reason"]
         metrics.increment("cancellation_requested_count")
         _cancellation.mark_cancelled(cancel_request["jobId"], reason=reason)
