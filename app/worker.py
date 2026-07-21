@@ -7,9 +7,6 @@ Akis:
     -> pipeline + teknik retry (§18.1)
     -> completed / failed result event (§11, §12)
     -> ack
-
-Pipeline bu asamada FAKE'tir (ADR-004 §12); gercek AI pipeline sonraki
-adimlarda bu noktaya takilacak.
 """
 from __future__ import annotations
 

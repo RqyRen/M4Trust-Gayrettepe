@@ -434,6 +434,11 @@ def test_pdf_pipeline_produces_schema_valid_completed_event(base_url: str, monke
     assert document["pageCount"] == 1
     assert document["contentSha256"] == hashlib.sha256(_PDF_BYTES).hexdigest()
 
+    # Bulgu (21 Temmuz 2026, bagimsiz denetim): retrievalVersion sabit None
+    # yaziyordu, RAG (PR #31) gercekten calisiyor olmasina ragmen. Artik
+    # pipelineVersion/promptVersion ile ayni statik-versiyonlama desenini izler.
+    assert event["payload"]["technicalMetadata"]["retrievalVersion"] == pipeline_module.LEGAL_RAG_VERSION
+
 
 def test_llm_never_receives_raw_tax_id_but_output_shape_is_unchanged(
     base_url: str, monkeypatch: pytest.MonkeyPatch

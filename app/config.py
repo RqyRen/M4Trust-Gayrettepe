@@ -6,10 +6,18 @@ environment uzerinden verilir.
 """
 from __future__ import annotations
 
+import re
 from functools import lru_cache
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# contracts/schemas/common/producer-1.0.0.schema.json'daki "version" pattern'inin
+# birebir ayni: SERVICE_VERSION bu sekle uymazsa validate_outgoing() ilk is
+# tamamlandiginda sessizce patlar (is yapilir, sonuc hic yayinlanamaz, job hic
+# bitmez). Contract zaten zorunlu kildigi icin bunu Settings kurulurken erken
+# ve acikca reddetmek yeni bir kural degil, mevcut kuralin erken uygulanmasidir.
+_SEMVER_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$")
 
 
 class Settings(BaseSettings):
@@ -102,6 +110,14 @@ class Settings(BaseSettings):
     # Video frame ornekleme (maliyet/sure sinirlamasi)
     video_frame_sample_interval_seconds: float = 1.0
     video_max_sampled_frames: int = 30
+
+    @model_validator(mode="after")
+    def _require_semver_service_version(self) -> "Settings":
+        if not _SEMVER_PATTERN.match(self.service_version):
+            raise ValueError(
+                f"SERVICE_VERSION must be a semantic version (X.Y.Z), got {self.service_version!r}"
+            )
+        return self
 
     @model_validator(mode="after")
     def _require_object_storage_allowlist_in_production(self) -> "Settings":
