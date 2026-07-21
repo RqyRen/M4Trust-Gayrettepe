@@ -9,7 +9,7 @@ from app.config import get_settings
 from app.contracts.envelope import EventEnvelope
 from app.contracts.errors import ContractViolation, ErrorCode
 from app.contracts.schema_store import validator_for_id
-from app.messaging.topology import RK_DOC_REQUESTED, RK_VIDEO_REQUESTED
+from app.messaging.topology import RK_CANCEL_REQUESTED, RK_DOC_REQUESTED, RK_VIDEO_REQUESTED
 
 # Desteklenen command event türleri (ADR-002 §4).
 _REQUESTED = "ai.job.requested.v1"
@@ -143,4 +143,27 @@ def validate_semantic_consistency(request: dict, *, routing_key: str) -> None:
         raise ContractViolation(
             ErrorCode.MISSING_REQUIRED_FIELD,
             "subjectId does not match payload.input document/video identifier",
+        )
+
+
+def validate_cancel_semantic_consistency(request: dict, *, routing_key: str) -> None:
+    """`ai.job.cancel.requested.v1` icin sekil-otesi tutarlilik kontrolu.
+
+    validate_semantic_consistency() BURADA YENIDEN KULLANILAMAZ: o fonksiyon
+    jobType'i REQUEST routing key'ine esler (orn. DOCUMENT_EXTRACTION ->
+    ai.document-extraction.requested.v1), ama cancel mesaji her zaman
+    ai.job.cancel.requested.v1 routing key'inden gelir -- esleme asla
+    tutmaz, gecerli HER cancel dead-letter'a duser (bagimsiz denetim,
+    21 Temmuz 2026). Bu yuzden ayri, kucuk bir kontrol.
+    """
+    producer_service = request["producer"]["service"]
+    if producer_service != _EXPECTED_PRODUCER_SERVICE:
+        raise ContractViolation(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            f"unexpected producer.service: {producer_service!r}",
+        )
+    if routing_key != RK_CANCEL_REQUESTED:
+        raise ContractViolation(
+            ErrorCode.MISSING_REQUIRED_FIELD,
+            f"unexpected routing key for cancel command: {routing_key!r}",
         )

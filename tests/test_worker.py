@@ -19,7 +19,7 @@ from app.common.cancellation import JobCancelled
 from app.common.idempotency import JobStore, Resolution, ResolveResult, identity_of
 from app.contracts.errors import ErrorCode, PipelineFailure
 from app.messaging.publisher import PublishConfirmationFailed
-from app.messaging.topology import RK_DOC_REQUESTED
+from app.messaging.topology import RK_CANCEL_REQUESTED, RK_DOC_REQUESTED
 
 _EXAMPLES = Path(__file__).resolve().parents[1] / "contracts" / "examples"
 
@@ -30,6 +30,13 @@ class _FakeMethod:
     # (validate_semantic_consistency) -- fixture bu dosyada hep DOCUMENT_EXTRACTION
     # oldugu icin gercek routing key'i kullanmali, keyfi bir string degil.
     routing_key = RK_DOC_REQUESTED
+
+
+class _FakeCancelMethod:
+    delivery_tag = 1
+    # validate_cancel_semantic_consistency (bagimsiz denetim, 21 Temmuz 2026)
+    # cancel mesajinin GERCEK routing key'inden geldigini dogrular.
+    routing_key = RK_CANCEL_REQUESTED
 
 
 class _FakeCancellationStore:
@@ -313,7 +320,7 @@ def test_valid_cancel_message_records_intent_and_acks(monkeypatch) -> None:
 
     channel = MagicMock()
     body = json.dumps(_cancel_message()).encode("utf-8")
-    worker.handle_command(channel, _FakeMethod(), None, body)
+    worker.handle_command(channel, _FakeCancelMethod(), None, body)
 
     assert fake_cancellation.mark_calls == [("19191919-1919-4191-8191-191919191919", "USER_REQUESTED")]
     channel.basic_ack.assert_called_once_with(delivery_tag=1)
@@ -330,11 +337,42 @@ def test_schema_invalid_cancel_message_is_dead_lettered(monkeypatch) -> None:
     body = json.dumps(payload).encode("utf-8")
 
     channel = MagicMock()
-    worker.handle_command(channel, _FakeMethod(), None, body)
+    worker.handle_command(channel, _FakeCancelMethod(), None, body)
 
     channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
     channel.basic_ack.assert_not_called()
     assert fake_cancellation.mark_calls == []  # schema-invalid intent hic kaydedilmedi
+
+
+def test_cancel_from_wrong_routing_key_is_dead_lettered(monkeypatch) -> None:
+    # Bagimsiz denetim (21 Temmuz 2026): schema-valid ama yanlis routing
+    # key'den gelen bir cancel artik dead-letter'a duser, sessizce ack'lenmez.
+    fake_cancellation = _FakeCancellationStore()
+    monkeypatch.setattr(worker, "_cancellation", fake_cancellation)
+
+    channel = MagicMock()
+    body = json.dumps(_cancel_message()).encode("utf-8")
+    worker.handle_command(channel, _FakeMethod(), None, body)  # RK_DOC_REQUESTED, cancel icin yanlis
+
+    channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
+    channel.basic_ack.assert_not_called()
+    assert fake_cancellation.mark_calls == []
+
+
+def test_cancel_from_unexpected_producer_is_dead_lettered(monkeypatch) -> None:
+    fake_cancellation = _FakeCancellationStore()
+    monkeypatch.setattr(worker, "_cancellation", fake_cancellation)
+
+    payload = _cancel_message()
+    payload["producer"]["service"] = "some-other-service"
+    body = json.dumps(payload).encode("utf-8")
+
+    channel = MagicMock()
+    worker.handle_command(channel, _FakeCancelMethod(), None, body)
+
+    channel.basic_nack.assert_called_once_with(delivery_tag=1, requeue=False)
+    channel.basic_ack.assert_not_called()
+    assert fake_cancellation.mark_calls == []
 
 
 def test_job_cancelled_before_start_is_skipped_without_publish(monkeypatch) -> None:
