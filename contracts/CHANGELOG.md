@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Added the Slice 14A additive dispute and casework foundation contract (ADR-013 §2.1-§2.8):
+  buyer/seller entity ADMIN-only, idempotent `POST /deals/{dealId}/disputes` with closed
+  `DisputeReasonCode`, trimmed plaintext `subject` (1–200) and `statement` (1–4000),
+  `expectedDealVersion`, and `expectedFulfillmentVersion`, returning `201 Created` with
+  `DisputeDetail`, immutable `DisputeOpeningSnapshot`, and a `Location` header;
+  buyer/seller ADMIN/MEMBER `GET /deals/{dealId}/disputes` and
+  `GET /deals/{dealId}/disputes/{disputeId}`; append-only paginated comments;
+  counterparty ADMIN `POST .../acknowledge` (`OPEN -> UNDER_REVIEW`); and opening-entity
+  ADMIN `POST .../withdraw` (`OPEN | UNDER_REVIEW -> WITHDRAWN`). Every mutation requires
+  CSRF and `Idempotency-Key`; acknowledge, withdraw, and comment require case
+  `expectedVersion`. Closed `DisputeStatus`
+  (`OPEN`/`UNDER_REVIEW`/`RESOLVED`/`WITHDRAWN`, with `RESOLVED` unreachable in 14A),
+  backend-derived `DisputeAvailableActions`, safe evidence and pinned advisory video
+  snapshot entries without storage identity or canonical AI payloads, and stable Problem
+  Details codes `CASEWORK_NOT_FOUND_OR_HIDDEN`, `DISPUTE_NOT_FOUND_OR_HIDDEN`,
+  `DISPUTE_OPEN_FORBIDDEN`, `DISPUTE_COMMENT_FORBIDDEN`, `DISPUTE_ACKNOWLEDGE_FORBIDDEN`,
+  `DISPUTE_WITHDRAW_FORBIDDEN`, `DEAL_STALE_VERSION`, `FULFILLMENT_STALE_VERSION`,
+  `DISPUTE_STALE_VERSION`, `DEAL_STATE_CONFLICT`, `FULFILLMENT_STATE_CONFLICT`,
+  `DISPUTE_ACTIVE_CASE_EXISTS`, `DISPUTE_STATE_CONFLICT`, and `IDEMPOTENCY_KEY_REUSED`.
+  Optional null-tolerant `DealDetail.casework` (`DealCaseworkSummary`) and
+  `canOpenDispute` on `DealAvailableActions` are additive actor-aware members. AI
+  schemas, fixtures, AsyncAPI, and the AI-internal OpenAPI remain unchanged.
+
 - Added the Slice 13 additive per-evidence video analysis contract (ADR-012 §2.1-§2.7):
   participant-readable `GET /deals/{dealId}/fulfillment/evidence/{evidenceSubmissionId}/video-analysis`
   and buyer entity ADMIN-only, idempotent `POST` on the same path with closed
