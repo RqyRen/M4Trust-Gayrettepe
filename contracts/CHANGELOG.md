@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Added the Slice 13 additive per-evidence video analysis contract (ADR-012 §2.1-§2.7):
+  participant-readable `GET /deals/{dealId}/fulfillment/evidence/{evidenceSubmissionId}/video-analysis`
+  and buyer entity ADMIN-only, idempotent `POST` on the same path with closed
+  `RequestVideoAnalysisRequest.expectedEvidenceVersion`, returning `202 Accepted`
+  with `VideoAnalysisDetail` and a `Location` header pointing back at the GET
+  resource. The operation never waits for RabbitMQ, storage download, or AI
+  processing. Closed `VideoAnalysisStatus`
+  (`NOT_REQUESTED`/`QUEUED`/`RESULT_AVAILABLE`/`FAILED`), safe advisory
+  `VideoAnalysisResult` (duration, observations, anomalies, summary, warnings),
+  backend-derived `VideoAnalysisAvailableActions.canRequest`, and stable Problem
+  Details codes `VIDEO_ANALYSIS_REQUEST_FORBIDDEN`,
+  `VIDEO_ANALYSIS_EVIDENCE_NOT_ELIGIBLE`, `EVIDENCE_STALE_VERSION`,
+  `VIDEO_ANALYSIS_ACTIVE_JOB_EXISTS`, `VIDEO_ANALYSIS_ALREADY_COMPLETED`, and
+  `IDEMPOTENCY_KEY_REUSED`. The public result omits technical metadata, storage
+  identifiers/URLs, event payloads, and provider/model details. AI schemas,
+  fixtures, AsyncAPI, and the AI-internal OpenAPI remain unchanged.
+
 - Added the Slice 12 additive fulfillment and evidence contract (ADR-011 §2.1-§2.6):
   seller ADMIN/MEMBER `POST /deals/{dealId}/fulfillment` to atomically create the
   Deal's single fulfillment record and primary milestone bound to the current
