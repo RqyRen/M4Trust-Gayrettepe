@@ -7,11 +7,15 @@ Adim 4'te eklenecek.
 from __future__ import annotations
 
 import ssl
+import threading
+from typing import Callable, TypeVar
 
 import pika
 
 from app.config import get_settings
 from app.messaging.topology import COMMAND_BINDINGS, declare_topology
+
+T = TypeVar("T")
 
 
 def _ssl_options(settings) -> pika.SSLOptions | None:
@@ -43,6 +47,55 @@ def build_connection() -> pika.BlockingConnection:
         ssl_options=_ssl_options(settings),
     )
     return pika.BlockingConnection(params)
+
+
+def run_while_pumping_connection(
+    operation: Callable[[], T],
+    *,
+    connection: pika.BlockingConnection,
+    poll_interval: float = 5.0,
+) -> T:
+    """`operation()`'i arka plan thread'inde calistirirken cagiran (connection'i
+    sahiplenen) thread'de periyodik `connection.process_data_events()` cagirir.
+
+    Bulgu (22 Temmuz 2026, Railway'de kanitlandi): `on_message_callback` (worker.py
+    handle_command) icinde uzun suren senkron bir cagri (LLM istegi, birkac dakika
+    surebiliyor) oldugunda, pika `heartbeat=30` icin gereken soket I/O'sunu hic
+    isleyemiyordu -- cunku connection'in sahibi olan thread tamamen o cagriya
+    bloklanmisti. CloudAMQP karsilik gormeyince TCP baglantisini kendisi kapatiyor,
+    sonuc zaten Redis'e guvenle yazildiktan SONRA `BrokenPipeError` firlatiliyordu
+    (veri kaybi yok, ama gereksiz reconnect/gurultu).
+
+    `BlockingConnection.process_data_events()` mevcut bir consumer callback'inin
+    icinden (nested/reentrant) cagrilmayi destekler -- `_acquire_event_dispatch`
+    ic ice cagrilarda yeni bir callback dispatch etmez, ama soket I/O'yu (heartbeat
+    dahil) yine de isler. Bu yuzden asil agir isi (LLM cagrisi dahil) ayri bir
+    thread'e verip, connection'in sahibi olan thread'i sadece bu pompalama icin
+    kullanmak guvenli: channel/connection islemleri (ack/nack/publish) hep bu
+    thread'de, hep `operation()` bittikten SONRA yapiliyor -- iki thread arasinda
+    hic pika nesnesi paylasilmiyor.
+    """
+    result: list[T] = []
+    error: list[BaseException] = []
+    done = threading.Event()
+
+    def _run() -> None:
+        try:
+            result.append(operation())
+        except BaseException as exc:  # noqa: BLE001 - cagiran thread'e aynen iletilir
+            error.append(exc)
+        finally:
+            done.set()
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    while not done.is_set():
+        connection.process_data_events(time_limit=poll_interval)
+    thread.join()
+
+    if error:
+        raise error[0]
+    return result[0]
 
 
 def start_consuming(on_command, *, state=None) -> None:
