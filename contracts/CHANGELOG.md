@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- Removed unreleased ADR-017/018-only public ApiErrorCode catalog values that had
+  no runtime endpoint or reusable response ownership yet:
+  `AUTH_INVITATION_NOT_FOUND_OR_INVALID`, `AUTH_INVITATION_STATE_CONFLICT`,
+  `AUTH_PASSWORD_RESET_NOT_FOUND_OR_INVALID`, `AUTH_REGISTRATION_CLOSED`,
+  `MEMBER_INVITATION_ACTIVE_EXISTS`, `MEMBER_INVITATION_NOT_FOUND_OR_HIDDEN`,
+  `MEMBER_INVITATION_STATE_CONFLICT`, `UPLOAD_REJECTED_MALWARE`,
+  `UPLOAD_SCAN_PENDING`, and `UPLOAD_SCAN_UNAVAILABLE`. Existing `ACCESS_DENIED`
+  and all `DEAL_INVITATION_*` codes remain.
+
+- AI consumer compatibility accepts only optional read-only `M4TRUST_AI_CONTRACTS_ROOT`
+  (no `eval` / `M4TRUST_AI_CONSUMER_CHECK_CMD`). Mismatch reports per-file expected/actual
+  SHA-256 hashes; absent baseline emits exact
+  `UNVERIFIED_EXTERNAL_GATE: AI contract baseline not supplied`.
+
+- Added deterministic main contract-bundle digest foundation (ADR-016 §2.5): inclusion
+  globs over `asyncapi`/`openapi`/`schemas`/`examples`, per-file SHA-256 of exact
+  committed bytes, POSIX ordinal UTF-8/LF manifest, and `sha256:<hex>` digest via
+  `contracts/scripts/validate_contracts.py` (including `--print-digest` and optional
+  read-only `M4TRUST_AI_CONTRACTS_ROOT` compare). Added private
+  `openapi/core-internal-v1.yaml` for `GET /internal/v1/contracts` with the ADR-016
+  CoreContractBundle projection and HTTP bearer probe-token security scheme.
+  Ownership arrays reject duplicate `global`/`byResponse` entries.
+
+- Closed public Problem Details catalogs in `core-api-v1.yaml`: `ProblemDetail.code`
+  now `$ref`s `ApiErrorCode` and `FieldError.code` `$ref`s `FieldErrorCode`. Catalog
+  ownership is machine-readable via `components.x-m4trust-api-error-ownership`
+  (exact-set of `global` plus every reusable-response `byResponse` entry) and includes
+  grandfathered `ACCESS_DENIED`, ADR-006 globals, Slice 15 readiness codes, and
+  documented endpoint codes. Undocumented combined fulfillment codes
+  `DEAL_OR_LEGAL_ENTITY_NOT_FOUND_OR_HIDDEN` and
+  `FULFILLMENT_OR_EVIDENCE_NOT_FOUND_OR_HIDDEN` are removed; fulfillment/evidence
+  authorization boundaries emit granular `LEGAL_ENTITY_NOT_FOUND`,
+  `DEAL_NOT_FOUND`, `FULFILLMENT_NOT_FOUND`, and `EVIDENCE_NOT_FOUND`.
+
 - Added the Slice 14A additive dispute and casework foundation contract (ADR-013 §2.1-§2.8):
   buyer/seller entity ADMIN-only, idempotent `POST /deals/{dealId}/disputes` with closed
   `DisputeReasonCode`, trimmed plaintext `subject` (1–200) and `statement` (1–4000),
