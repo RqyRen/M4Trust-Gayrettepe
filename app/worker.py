@@ -29,7 +29,7 @@ from app.contracts.validation import (
     validate_outgoing,
     validate_semantic_consistency,
 )
-from app.messaging.consumer import start_consuming
+from app.messaging.consumer import run_while_pumping_connection, start_consuming
 from app.messaging.publisher import PublishConfirmationFailed, publish_result
 from app.pipeline.failure import build_failed_event
 from app.pipeline.registry import pipeline_for
@@ -233,10 +233,20 @@ def handle_command(channel, method, properties, body: bytes) -> None:
         # surerse (buyuk OCR+LLM, video) lease'in periyodik yenilenmesi,
         # gercekten calisan bir worker'in job'i yanlislikla "coktu" sayilip
         # baskasina devredilmesini engeller.
-        event, attempts = run_with_heartbeat(
-            lambda: run_with_retry(lambda attempt: pipeline(request, check_cancelled=check_cancelled), DEFAULT_POLICY),
-            renew_lease=lambda: _store.renew_lease(identity),
-            interval_seconds=heartbeat_interval,
+        #
+        # run_while_pumping_connection (bulgu, 22 Temmuz 2026 - Railway'de
+        # kanitlandi): ayni sure boyunca RabbitMQ heartbeat'inin de aksamamasi
+        # icin asil isi ayri bir thread'de calistirip, bu (connection'in sahibi
+        # olan) thread'i sadece pika'nin soket I/O'sunu pompalamak icin kullanir.
+        event, attempts = run_while_pumping_connection(
+            lambda: run_with_heartbeat(
+                lambda: run_with_retry(
+                    lambda attempt: pipeline(request, check_cancelled=check_cancelled), DEFAULT_POLICY
+                ),
+                renew_lease=lambda: _store.renew_lease(identity),
+                interval_seconds=heartbeat_interval,
+            ),
+            connection=channel.connection,
         )
     except JobCancelled:
         # Bulgu (Berke review #1): pipeline bir checkpoint'te iptali gordu.
