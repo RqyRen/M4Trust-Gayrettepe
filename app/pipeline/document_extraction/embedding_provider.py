@@ -10,6 +10,12 @@ bir saglayiciya gecilmek istenirse tek degisecek yer burasidir: kanun
 kulliyatini yeniden embed edip (build_embeddings.py) bu fonksiyonun govdesini
 degistirmek yeterlidir, retrieval veya pipeline kodunun geri kalanina
 dokunulmaz.
+
+Bulgu (22 Temmuz 2026, Railway smoke test): fp32 (use_fp16=False) yuklemesi
+1GB bellek limitli bir container'da tekrarlanan OOM-kill dongusune sebep
+oldu (model+aktivasyonlar 1GB'i asiyor). fp16'ya gecmek bellek ayak izini
+kabaca yarıya indiriyor, retrieval (benzerlik siralama) kalitesinde pratikte
+fark yaratmiyor -- geri alinmasi gerekirse tek satir.
 """
 
 from __future__ import annotations
@@ -24,7 +30,7 @@ def _get_model():
     if _model is None:
         from FlagEmbedding import BGEM3FlagModel
 
-        _model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=False)
+        _model = BGEM3FlagModel("BAAI/bge-m3", use_fp16=True)
     return _model
 
 
