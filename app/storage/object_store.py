@@ -31,8 +31,15 @@ _REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 
 
 def _parse_utc(value: str) -> datetime:
-    # Contract RFC 3339 UTC + trailing Z garanti eder (utc-timestamp schema).
-    return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    # Contract RFC 3339 UTC + trailing Z garanti eder (utc-timestamp schema,
+    # pattern "Z$") -- RFC 3339 kesirli saniyeye (fractional seconds) izin
+    # verir, sabit "%Y-%m-%dT%H:%M:%SZ" strptime formati bunu reddediyordu.
+    # Bulgu (23 Temmuz 2026, Berke): gercek Core ciktisi mikrosaniyeli
+    # (ör. ...T01:47:51.831438Z) basiyor, contract'a tamamen uygun ama
+    # burada ValueError -> yanlislikla INVALID_DOWNLOAD_REFERENCE
+    # ("invalid format") uretiyordu, indirme/allowlist kontrolune hic
+    # sira gelmeden. deadline.py'deki ayni kalip kullanilir.
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def _ensure_not_expired(expires_at: str, *, now: datetime | None = None) -> None:

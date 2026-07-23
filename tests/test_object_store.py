@@ -134,6 +134,30 @@ def test_expired_reference_rejected_without_download(base_url: str) -> None:
     assert exc.value.code is ErrorCode.INVALID_DOWNLOAD_REFERENCE
 
 
+def test_fractional_second_expires_at_is_accepted(base_url: str) -> None:
+    """Bulgu (23 Temmuz 2026, Berke): gercek Core ciktisi expiresAt'i kesirli
+    saniyeli basiyor (ör. ...T01:47:51.831438Z) -- contract (utc-timestamp
+    schema, pattern "Z$") buna izin veriyor, ama eski sabit-format strptime
+    bunu ValueError ile reddedip yanlislikla INVALID_DOWNLOAD_REFERENCE
+    uretiyordu, indirme hic denenmeden."""
+    future_fractional = (datetime.now(timezone.utc) + timedelta(minutes=10)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%f"
+    ) + "Z"
+    with fetch_source(_input(f"{base_url}/ok", expires_at=future_fractional)) as path:
+        assert path.read_bytes() == _CONTENT
+
+
+def test_expired_fractional_second_reference_is_still_rejected(base_url: str) -> None:
+    """Kesirli saniye destegi eklenirken suresi-dolmus kontrolu bozulmamali."""
+    past_fractional = (datetime.now(timezone.utc) - timedelta(minutes=1)).strftime(
+        "%Y-%m-%dT%H:%M:%S.%f"
+    ) + "Z"
+    with pytest.raises(PipelineFailure) as exc:
+        with fetch_source(_input(f"{base_url}/ok", expires_at=past_fractional)) as _:
+            pass
+    assert exc.value.code is ErrorCode.INVALID_DOWNLOAD_REFERENCE
+
+
 def test_oversize_source_rejected(base_url: str) -> None:
     with pytest.raises(PipelineFailure) as exc:
         with fetch_source(_input(f"{base_url}/ok"), max_bytes=16) as _:
