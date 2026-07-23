@@ -163,6 +163,7 @@ def _no_real_legal_rag(monkeypatch: pytest.MonkeyPatch) -> None:
     kendisini test eden test bunu kendi icinde ayrica override eder.
     """
     monkeypatch.setattr(llm_module.legal_rag, "retrieve", lambda *a, **k: [])
+    monkeypatch.setattr(llm_module.legal_rag, "retrieve_batch", lambda query_texts, top_k=5: [[] for _ in query_texts])
 
 
 @pytest.fixture(autouse=True)
@@ -370,6 +371,62 @@ def test_map_rule_omits_legal_basis_when_retrieval_fails(monkeypatch: pytest.Mon
     )
     assert "legalBasis" not in rule
     assert rule["category"] == "PAYMENT"
+
+
+def test_map_to_canonical_result_batches_legal_basis_lookup_in_a_single_call(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Bulgu (23 Temmuz 2026, Railway'de kanitlandi): N kural icin N ayri
+    legal_rag.retrieve() cagrisi, OpenAI cevap verdikten SONRA kural sayisiyla
+    orantili bir gecikme yaratiyordu (12 kuralli bir sozlesmede ~7 dakika).
+    map_to_canonical_result artik TUM kurallari TEK bir retrieve_batch()
+    cagrisinda islemeli -- kac kural olursa olsun.
+    """
+    calls: list[list[str]] = []
+
+    def _fake_retrieve_batch(query_texts, top_k=1):
+        calls.append(list(query_texts))
+        return [
+            [{"source": "tbk-6098", "madde_no": str(i + 1), "score": 0.9, "text": "..."}]
+            for i in range(len(query_texts))
+        ]
+
+    monkeypatch.setattr(mapping_module.legal_rag, "retrieve_batch", _fake_retrieve_batch)
+
+    llm_output = {
+        "parties": [],
+        "rules": [
+            {"category": "PAYMENT", "title": f"Kural {i}", "description": "...", "confidence": 0.9}
+            for i in range(5)
+        ],
+        "deliveryRequirements": [],
+        "requiresManualReview": False,
+        "reviewReasons": [],
+    }
+    result, _ = mapping_module.map_to_canonical_result(llm_output, document={})
+
+    assert len(calls) == 1  # tek batch cagrisi, kural basina degil
+    assert len(calls[0]) == 5
+    assert len(result["rules"]) == 5
+    for i, rule in enumerate(result["rules"]):
+        assert rule["legalBasis"] == {"source": "tbk-6098", "articleNo": str(i + 1)}
+
+
+def test_map_to_canonical_result_omits_legal_basis_when_batch_retrieval_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def _broken_retrieve_batch(query_texts, top_k=1):
+        raise FileNotFoundError("legal corpus embeddings not built")
+
+    monkeypatch.setattr(mapping_module.legal_rag, "retrieve_batch", _broken_retrieve_batch)
+
+    llm_output = {
+        "parties": [],
+        "rules": [{"category": "PAYMENT", "title": "Odeme", "description": "30 gun icinde odeme.", "confidence": 0.8}],
+        "deliveryRequirements": [],
+        "requiresManualReview": False,
+        "reviewReasons": [],
+    }
+    result, _ = mapping_module.map_to_canonical_result(llm_output, document={})
+
+    assert len(result["rules"]) == 1
+    assert "legalBasis" not in result["rules"][0]
 
 
 def _fake_openai_client(*, choices: list):
