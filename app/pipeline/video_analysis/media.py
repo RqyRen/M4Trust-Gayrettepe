@@ -1,4 +1,4 @@
-"""Video format tespiti (ADR-002 §3.2 "Format kontrolu").
+"""Video/foto format tespiti (ADR-002 §3.2 "Format kontrolu").
 
 Beyan edilen mediaType'a KORU KORUNE guvenilmez; icerigin kendisine bakilir.
 Desteklenmeyen tur -> UNSUPPORTED_MEDIA_TYPE (non-retryable).
@@ -11,6 +11,10 @@ from app.contracts.errors import ErrorCode, PipelineFailure
 
 MP4 = "video/mp4"
 WEBM = "video/webm"
+IMAGE_JPEG = "image/jpeg"
+IMAGE_PNG = "image/png"
+
+IMAGE_TYPES = (IMAGE_JPEG, IMAGE_PNG)
 
 _HEADER_SIZE = 12
 
@@ -25,9 +29,19 @@ def _is_webm(header: bytes) -> bool:
     return header.startswith(b"\x1a\x45\xdf\xa3")
 
 
+def _is_jpeg(header: bytes) -> bool:
+    return header[:3] == b"\xff\xd8\xff"
+
+
+def _is_png(header: bytes) -> bool:
+    return header[:8] == b"\x89PNG\r\n\x1a\n"
+
+
 _DETECTORS: tuple[tuple[object, str], ...] = (
     (_is_mp4, MP4),
     (_is_webm, WEBM),
+    (_is_jpeg, IMAGE_JPEG),
+    (_is_png, IMAGE_PNG),
 )
 
 

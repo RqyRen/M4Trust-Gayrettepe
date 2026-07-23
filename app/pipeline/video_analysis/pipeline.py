@@ -1,10 +1,11 @@
 """VIDEO_ANALYSIS pipeline (ADR-002 SS3.2).
 
 ADR'deki adimlar ve mevcut durum:
-  Video indirme             -> GERCEK (presigned URL, storage/object_store)
+  Video/foto indirme        -> GERCEK (presigned URL, storage/object_store)
   Hash dogrulama            -> GERCEK (SHA-256; uyusmazlik retry edilmez)
-  Format kontrolu           -> GERCEK (magic byte: MP4/WebM)
-  Frame veya segment analizi-> GERCEK (OpenCV ile sabit araliklarla ornekleme)
+  Format kontrolu           -> GERCEK (magic byte: MP4/WebM/JPEG/PNG)
+  Frame veya segment analizi-> GERCEK (video: OpenCV sabit araliklarla ornekleme;
+                                foto: tek kare, t=0)
   Nesne veya olay tespiti   -> GERCEK (Roboflow logistics-sz9jr modeli)
   Confidence uretimi        -> GERCEK (Roboflow'un kendi confidence degeri)
   Advisory anomaly uretimi  -> GERCEK (Roboflow detecting-a-damaged-parcel modeli)
@@ -26,11 +27,11 @@ from app.config import get_settings
 from app.contracts.validation import validate_outgoing
 from app.pipeline.deadline import check_deadline
 from app.pipeline.video_analysis import aggregation, roboflow_client
-from app.pipeline.video_analysis.frames import sample_frames
-from app.pipeline.video_analysis.media import detect_media_type
+from app.pipeline.video_analysis.frames import sample_frames, sample_image
+from app.pipeline.video_analysis.media import IMAGE_TYPES, detect_media_type
 from app.storage.object_store import fetch_source
 
-PIPELINE_VERSION = "video-pipeline-1.1.0"
+PIPELINE_VERSION = "video-pipeline-1.2.0"
 
 
 def _utc_now_z() -> str:
@@ -62,8 +63,8 @@ def run(request: dict, *, check_cancelled: Callable[[], None] = lambda: None) ->
     check_cancelled()
     check_deadline(deadline_at)
     with fetch_source(source_input) as path:
-        detect_media_type(path, declared=source_input["mediaType"])
-        frames = sample_frames(path, settings)
+        detected_media_type = detect_media_type(path, declared=source_input["mediaType"])
+        frames = sample_image(path) if detected_media_type in IMAGE_TYPES else sample_frames(path, settings)
 
         logistics_per_frame = []
         damage_per_frame = []

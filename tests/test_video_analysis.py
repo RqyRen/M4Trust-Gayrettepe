@@ -24,8 +24,8 @@ from app.contracts.errors import ErrorCode, PipelineFailure
 from app.contracts.validation import validate_outgoing
 from app.pipeline.registry import pipeline_for
 from app.pipeline.video_analysis import roboflow_client
-from app.pipeline.video_analysis.frames import sample_frames
-from app.pipeline.video_analysis.media import MP4, WEBM, detect_media_type
+from app.pipeline.video_analysis.frames import sample_frames, sample_image
+from app.pipeline.video_analysis.media import IMAGE_JPEG, IMAGE_PNG, MP4, WEBM, detect_media_type
 from app.pipeline.video_analysis.pipeline import run
 
 _EXAMPLES = Path(__file__).resolve().parents[1] / "contracts" / "examples"
@@ -48,12 +48,40 @@ def _real_mp4_bytes(*, seconds: float = 3.0, fps: float = 10.0) -> bytes:
         Path(tmp_path).unlink(missing_ok=True)
 
 
+def _real_jpeg_bytes() -> bytes:
+    """OpenCV ile gercek, decode edilebilir bir JPEG uretir (bir kutu iceriyor)."""
+    frame = np.full((240, 320, 3), 255, dtype=np.uint8)
+    cv2.rectangle(frame, (50, 50), (150, 150), (100, 50, 20), -1)
+    success, buffer = cv2.imencode(".jpg", frame)
+    assert success
+    return buffer.tobytes()
+
+
+def _real_png_bytes() -> bytes:
+    """OpenCV ile gercek, decode edilebilir bir PNG uretir (bir kutu iceriyor)."""
+    frame = np.full((240, 320, 3), 255, dtype=np.uint8)
+    cv2.rectangle(frame, (50, 50), (150, 150), (100, 50, 20), -1)
+    success, buffer = cv2.imencode(".png", frame)
+    assert success
+    return buffer.tobytes()
+
+
 _MP4_BYTES = _real_mp4_bytes()
+_JPEG_BYTES = _real_jpeg_bytes()
+_PNG_BYTES = _real_png_bytes()
 # Dogru magic byte (ftyp) ama gercek video verisi degil - decode basarisiz olmali.
 _CORRUPTED_MP4 = b"\x00\x00\x00\x18ftypisom" + b"not real video data " * 200
+_CORRUPTED_JPEG = b"\xff\xd8\xff" + b"not real image data " * 200
 _JUNK = b"just plain bytes, not a video container"
 
-_BODIES = {"/mp4": _MP4_BYTES, "/corrupted": _CORRUPTED_MP4, "/junk": _JUNK}
+_BODIES = {
+    "/mp4": _MP4_BYTES,
+    "/corrupted": _CORRUPTED_MP4,
+    "/junk": _JUNK,
+    "/jpeg": _JPEG_BYTES,
+    "/png": _PNG_BYTES,
+    "/corrupted-jpeg": _CORRUPTED_JPEG,
+}
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -215,6 +243,69 @@ def test_low_confidence_damage_is_filtered_out(base_url: str, monkeypatch: pytes
     request = _request(base_url, "/mp4", _MP4_BYTES)
     event = run(request)
     assert event["payload"]["result"]["anomalies"] == []
+
+
+# --- Foto pipeline (JPEG/PNG tek-kare, box counting) ---
+
+def test_photo_pipeline_produces_schema_valid_completed_event(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_roboflow(monkeypatch, logistics=[{"class": "sealed_box", "confidence": 0.9}])
+    request = _request(base_url, "/jpeg", _JPEG_BYTES, media_type=IMAGE_JPEG)
+    event = run(request)
+
+    assert event["eventType"] == "ai.job.completed.v1"
+    assert event["jobType"] == "VIDEO_ANALYSIS"
+    validate_outgoing(event)
+
+
+def test_photo_object_count_matches_expected(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    request = _request(base_url, "/jpeg", _JPEG_BYTES, media_type=IMAGE_JPEG)
+    expected = _expected_objects(request)  # full-request: sealed_box x4, delivery_note x1
+    logistics = []
+    for item in expected:
+        logistics.extend({"class": item["label"], "confidence": 0.95} for _ in range(item["expectedCount"]))
+    _mock_roboflow(monkeypatch, logistics=logistics)
+
+    event = run(request)
+    result = event["payload"]["result"]
+    assert result["summary"]["advisoryOutcome"] == "NO_ISSUE_DETECTED"
+
+    counts = {o["label"]: o["observedValue"] for o in result["observations"] if o["type"] == "OBJECT_COUNT"}
+    for item in expected:
+        assert counts[item["label"]] == item["expectedCount"]
+
+
+def test_png_photo_is_accepted(base_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _mock_roboflow(monkeypatch, logistics=[{"class": "sealed_box", "confidence": 0.9}])
+    request = _request(base_url, "/png", _PNG_BYTES, media_type=IMAGE_PNG)
+    event = run(request)
+    validate_outgoing(event)
+
+
+def test_corrupted_photo_rejected(base_url: str) -> None:
+    request = _request(base_url, "/corrupted-jpeg", _CORRUPTED_JPEG, media_type=IMAGE_JPEG)
+    with pytest.raises(PipelineFailure) as exc:
+        run(request)
+    assert exc.value.code is ErrorCode.CORRUPTED_FILE
+
+
+def test_detect_media_type_reads_jpeg_and_png_magic_bytes(tmp_path: Path) -> None:
+    jpeg_path = tmp_path / "a.jpg"
+    jpeg_path.write_bytes(_JPEG_BYTES)
+    assert detect_media_type(jpeg_path, declared=IMAGE_JPEG) == IMAGE_JPEG
+
+    png_path = tmp_path / "a.png"
+    png_path.write_bytes(_PNG_BYTES)
+    assert detect_media_type(png_path, declared=IMAGE_PNG) == IMAGE_PNG
+
+
+def test_sample_image_returns_single_frame_at_time_zero(tmp_path: Path) -> None:
+    jpeg_path = tmp_path / "a.jpg"
+    jpeg_path.write_bytes(_JPEG_BYTES)
+    frames = sample_image(jpeg_path)
+    assert len(frames) == 1
+    assert frames[0].index == 0
+    assert frames[0].time_ms == 0
+    assert frames[0].jpeg.startswith(b"\xff\xd8")
 
 
 # --- Hata yollari ---
