@@ -1,7 +1,11 @@
-"""Video frame ornekleme (ADR-002 SS3.2 "Frame veya segment analizi").
+"""Video frame ornekleme ve foto -> tek-frame donusumu (ADR-002 SS3.2 "Frame
+veya segment analizi").
 
-Butun frame'ler islenmez: maliyet/sure sinirlamasi icin sabit araliklarla
-ornekleme yapilir, ustten sinirlanir (video_max_sampled_frames).
+Video icin butun frame'ler islenmez: maliyet/sure sinirlamasi icin sabit
+araliklarla ornekleme yapilir, ustten sinirlanir (video_max_sampled_frames).
+Foto girdisinde ornekleme yoktur -- goruntunun kendisi t=0'da tek bir frame
+olarak ele alinir (aggregation.py frame sayisina bagli degildir, tek frame'le
+de calisir).
 """
 from __future__ import annotations
 
@@ -66,3 +70,28 @@ def sample_frames(path: Path, settings: Settings) -> list[SampledFrame]:
         )
 
     return sampled
+
+
+def sample_image(path: Path) -> list[SampledFrame]:
+    """Tek bir fotografi, video pipeline'inin frame modeline uyacak sekilde
+    tek elemanli bir frame listesine cevirir (index=0, time_ms=0).
+
+    Firlatir: PipelineFailure(CORRUPTED_FILE) — goruntu decode edilemiyorsa.
+    """
+    image = cv2.imread(str(path))
+    if image is None:
+        raise PipelineFailure(
+            ErrorCode.CORRUPTED_FILE,
+            "image content could not be decoded",
+            details={"reason": "unreadable image"},
+        )
+
+    success, buffer = cv2.imencode(".jpg", image)
+    if not success:
+        raise PipelineFailure(
+            ErrorCode.CORRUPTED_FILE,
+            "image content could not be encoded",
+            details={"reason": "encode failure"},
+        )
+
+    return [SampledFrame(index=0, time_ms=0, jpeg=buffer.tobytes())]
