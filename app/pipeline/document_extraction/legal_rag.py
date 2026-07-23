@@ -56,3 +56,29 @@ def retrieve(query_text: str, top_k: int = 5) -> list[dict]:
     scores = vectors @ query_vec
     top_indices = np.argsort(-scores)[:top_k]
     return [{**chunks[i], "score": float(scores[i])} for i in top_indices]
+
+
+def retrieve_batch(query_texts: list[str], top_k: int = 5) -> list[list[dict]]:
+    """Birden fazla sorguyu TEK bir embedding cagrisiyla (batch) isler.
+
+    Performans bulgusu (23 Temmuz 2026, Railway'de kanitlandi): mapping.py
+    her kural icin ayri ayri retrieve() cagirdiginda (N kural = N ayri BGE-M3
+    cagrisi), OpenAI cevap verdikten SONRA kural sayisiyla orantili bir
+    gecikme olusuyordu -- 12 kuralli bir sozlesmede toplam sure ~7 dakikaya
+    cikiyordu (kural basina ~30-45sn, LLM'in kendi suresinden bagimsiz).
+    Tum sorgular TEK bir embed_texts() cagrisinda batch'lenerek bu N-kat
+    maliyet tek cagriya indirilir.
+    """
+    if not query_texts:
+        return []
+    vectors, chunks = _load()
+    query_vecs = embed_texts(query_texts)
+    norms = np.linalg.norm(query_vecs, axis=1, keepdims=True)
+    query_vecs = query_vecs / np.clip(norms, 1e-9, None)
+    all_scores = vectors @ query_vecs.T  # (n_chunks, n_queries)
+    results: list[list[dict]] = []
+    for i in range(len(query_texts)):
+        scores = all_scores[:, i]
+        top_indices = np.argsort(-scores)[:top_k]
+        results.append([{**chunks[j], "score": float(scores[j])} for j in top_indices])
+    return results

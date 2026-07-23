@@ -172,22 +172,14 @@ def _map_structured_value(item: dict, warnings: list[dict]) -> dict:
     return {"type": "TEXT", "value": str(item.get("description") or item.get("title") or "")}
 
 
-def _legal_basis_for_rule(title: str, description: str) -> dict | None:
-    """Kural metnine (title+description) en ilgili kanun maddesini bulur.
+def _legal_basis_from_results(results: list[dict] | None) -> dict | None:
+    """`legal_rag.retrieve()`/`retrieve_batch()` sonucunu legalBasis alanina cevirir.
 
     Legal RAG bir izlenebilirlik artiricidir, mapping'in onkosulu degildir:
-    retrieval basarisiz olursa (embedding yoksa, model yuklenemezse) ya da
     yeterince ilgili bir madde bulunamazsa (skor esigin altinda, veya madde
     numarasi olmayan bir baslik-bazli chunk) None doner -- rule yine de
     basariyla eslenir, sadece legalBasis alani hic eklenmez.
     """
-    query = f"{title} {description}".strip()
-    if not query:
-        return None
-    try:
-        results = legal_rag.retrieve(query, top_k=1)
-    except Exception:
-        return None
     if not results:
         return None
     top = results[0]
@@ -198,12 +190,42 @@ def _legal_basis_for_rule(title: str, description: str) -> dict | None:
     return {"source": top["source"], "articleNo": top["madde_no"]}
 
 
-def _map_rule(item: dict, index: int, warnings: list[dict]) -> dict:
+def _legal_basis_for_rule(title: str, description: str) -> dict | None:
+    """Kural metnine (title+description) en ilgili kanun maddesini bulur (tekli cagri).
+
+    Sadece `_map_rule`'un tek basina/test amacli cagirildigi yolda kullanilir
+    -- gercek pipeline (`map_to_canonical_result`) N kural icin N ayri cagri
+    yerine `retrieve_batch` ile hepsini TEK seferde isler (bulgu, 23 Temmuz
+    2026: N ayri cagri, kural sayisiyla orantili birkac dakikalik gecikmeye
+    sebep oluyordu).
+    """
+    query = f"{title} {description}".strip()
+    if not query:
+        return None
+    try:
+        results = legal_rag.retrieve(query, top_k=1)
+    except Exception:
+        return None
+    return _legal_basis_from_results(results)
+
+
+def _rule_title(item: dict) -> str:
+    return (item.get("title") or "Untitled rule").strip() or "Untitled rule"
+
+
+def _rule_description(item: dict) -> str:
+    return (item.get("description") or "").strip() or "No description extracted."
+
+
+_UNSET = object()
+
+
+def _map_rule(item: dict, index: int, warnings: list[dict], *, legal_basis=_UNSET) -> dict:
     category = item.get("category") if item.get("category") in {
         "PAYMENT", "DELIVERY", "QUALITY", "PENALTY", "TERMINATION", "DISPUTE", "OTHER", "UNKNOWN"
     } else "UNKNOWN"
-    title = (item.get("title") or "Untitled rule").strip() or "Untitled rule"
-    description = (item.get("description") or "").strip() or "No description extracted."
+    title = _rule_title(item)
+    description = _rule_description(item)
     rule = {
         "ruleReference": f"rule-{index + 1}",
         "category": category,
@@ -213,7 +235,10 @@ def _map_rule(item: dict, index: int, warnings: list[dict]) -> dict:
         "confidence": _clamp_confidence(item.get("confidence")),
         "sourceReferences": _source_references(item.get("page")),
     }
-    legal_basis = _legal_basis_for_rule(title, description)
+    # legal_basis verilmemisse (dogrudan/test amacli cagri) eskisi gibi tekli
+    # retrieve() yapar; map_to_canonical_result batch sonucunu hazir verir.
+    if legal_basis is _UNSET:
+        legal_basis = _legal_basis_for_rule(title, description)
     if legal_basis is not None:
         rule["legalBasis"] = legal_basis
     return rule
@@ -244,7 +269,22 @@ def map_to_canonical_result(llm_output: dict, *, document: dict) -> tuple[dict, 
 
     parties = [_map_party(p, i) for i, p in enumerate(llm_output.get("parties") or [])]
     parties = _dedupe_parties(parties, warnings)
-    rules = [_map_rule(r, i, warnings) for i, r in enumerate(llm_output.get("rules") or [])]
+
+    raw_rules = llm_output.get("rules") or []
+    # Tum kurallarin legal-basis sorgusunu TEK batch'te isle (bulgu, 23 Temmuz
+    # 2026): N ayri legal_rag.retrieve() cagrisi yerine N-kat daha hizli.
+    queries = [f"{_rule_title(r)} {_rule_description(r)}".strip() for r in raw_rules]
+    try:
+        batch_results = legal_rag.retrieve_batch(queries, top_k=1) if queries else []
+    except Exception:
+        batch_results = [None] * len(queries)
+    if len(batch_results) < len(queries):
+        batch_results = batch_results + [None] * (len(queries) - len(batch_results))
+    rules = [
+        _map_rule(r, i, warnings, legal_basis=_legal_basis_from_results(batch_results[i]))
+        for i, r in enumerate(raw_rules)
+    ]
+
     delivery_requirements = [
         _map_delivery_requirement(d, i) for i, d in enumerate(llm_output.get("deliveryRequirements") or [])
     ]
